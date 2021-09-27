@@ -1,2 +1,2 @@
 # gaia_oc_amd
-Open cluster automatic membership determination from Gaia data
+This repository is part of a master's research project (2021-2022) which aims to develop an automatic procedure for determining members of open clusters.
