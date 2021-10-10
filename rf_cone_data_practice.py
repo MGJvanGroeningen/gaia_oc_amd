@@ -74,6 +74,7 @@ def rf_practice_with_cone(data_dir,
     ax[1, 0].scatter(members['bp_rp'], members['phot_g_mean_mag'],
                      label=f'members (>= {probability_threshold})', s=1.0, c='red')
     ax[1, 0].set_title(cluster_name)
+    ax[1, 0].invert_yaxis()
     ax[1, 0].set_xlabel('bp_rp')
     ax[1, 0].set_ylabel('phot_g_mean_mag')
     ax[1, 0].legend()
