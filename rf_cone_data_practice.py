@@ -85,8 +85,8 @@ def rf_practice_with_cone(data_dir,
     ax[0, 1].set_title(cluster_name)
     ax[0, 1].set_xlabel('pmra')
     ax[0, 1].set_ylabel('pmdec')
-    ax[0, 1].set_xlim(-10, 10)
-    ax[0, 1].set_ylim(-10, 10)
+    ax[0, 1].set_xlim(-4.0, 0.0)
+    ax[0, 1].set_ylim(-2.0, 2.0)
     ax[0, 1].legend()
     ax[1, 1].scatter(non_members['phot_g_mean_mag'], non_members['parallax'],
                      label='non members', s=0.1, c='gray', alpha=alpha_non_members)
@@ -95,7 +95,7 @@ def rf_practice_with_cone(data_dir,
     ax[1, 1].set_title(cluster_name)
     ax[1, 1].set_xlabel('phot_g_mean_mag')
     ax[1, 1].set_ylabel('parallax')
-    ax[1, 1].set_ylim(-10, 10)
+    ax[1, 1].set_ylim(-1.0, 1.0)
     ax[1, 1].legend()
     if show_prediction or explore_max_depth_space:
         # create training data for random forest
