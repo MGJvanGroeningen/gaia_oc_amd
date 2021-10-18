@@ -37,13 +37,18 @@ def rf_advanced_practice_with_cone(data_dir,
                                    isochrone_file,
                                    probability_threshold,
                                    train_columns,
-                                   plx_max_d=1.0,
+                                   plx_sigma=3.0,
+                                   gmag_max_d=1.0,
                                    pm_max_d=1.0,
-                                   isochrone_max_d=1.0,
+                                   bp_rp_max_d=1.0,
+                                   extinction_v=0.15,
                                    cluster_name='cluster',
                                    drop_db_candidates=False,
+                                   plot_members=True,
+                                   plot_non_members=True,
                                    plot_predicted_members=True,
-                                   plot_predicted_non_members=True):
+                                   plot_predicted_non_members=True,
+                                   plot_plx_error_bars=False):
     # load practice data
     practice_data_path = data_dir
     practice_data_cone_file = os.path.join(practice_data_path, cone_file)
@@ -66,26 +71,36 @@ def rf_advanced_practice_with_cone(data_dir,
     for age in list(set(isochrones_df['logAge'].values)):
         isochrones.append(isochrones_df[(isochrones_df['logAge'] == age)].iloc[:135])
 
+    # isochrones = [isochrones[5]]
+
     # divide the cone in high probability members, low probability members, candidates and non members
     high_prob_members, low_prob_members, candidates, non_members = divide_cone(cone_df,
                                                                                cluster_df,
                                                                                train_columns,
                                                                                probability_threshold,
-                                                                               plx_max_d,
+                                                                               plx_sigma,
+                                                                               gmag_max_d,
                                                                                pm_max_d,
-                                                                               isochrone_max_d,
+                                                                               bp_rp_max_d,
                                                                                drop_db_candidates=drop_db_candidates)
+
+    high_prob_members_plx_errors = high_prob_members['parallax_error'].values
 
     if len(candidates) > 0:
         # correct the isochrones for distance and extinction
         mean_plx = np.mean(high_prob_members['parallax'].values)  # in mas
         mean_distance = 1000 / mean_plx
+        isochrone_distance = 0.80 * mean_distance
 
         # cheating with distance and extinction to make isochrone fit
-        isochrones = isochrone_correction(isochrones, 0.80 * mean_distance, extinction_v=0.05)
+        isochrones = isochrone_correction(isochrones, isochrone_distance, extinction_v=extinction_v)
+
+        print('\nMean distance of isochrone: ', isochrone_distance, ' pc')
+        print('A_V of the isochrone: ', extinction_v)
+        print('Log age of the isochrone: ', isochrones[0]['logAge'].values[0])
 
         # create training data for random forest
-        train_data = pd.concat([high_prob_members, non_members], ignore_index=True)
+        train_data = pd.concat([high_prob_members[train_columns], non_members], ignore_index=True)
         x_train = train_data.values
         y_train = np.concatenate((np.ones(len(high_prob_members)), np.zeros(len(non_members))))
         n_train = x_train.shape[0]
@@ -135,20 +150,26 @@ def rf_advanced_practice_with_cone(data_dir,
         dot_size = 3.0
 
         def plot_func(axis, x, y):
-            axis.scatter(non_members[x], non_members[y], label='non members', s=0.1 * dot_size, c='gray',
-                         alpha=alpha_non_members)
+            if plot_non_members:
+                axis.scatter(non_members[x], non_members[y], label='non members', s=0.1 * dot_size, c='gray',
+                             alpha=alpha_non_members, rasterized=True)
+                axis.scatter(low_prob_members_in_field[x], low_prob_members_in_field[y],
+                             marker='+', label=f'non_members_in_db', s=10 * dot_size, c='gray',
+                             rasterized=True)
             if plot_predicted_non_members:
                 axis.scatter(predicted_non_members[x], predicted_non_members[y], label=f'predicted_non_members',
-                             s=dot_size, c='gray')
+                             s=dot_size, c='red', rasterized=True)
                 axis.scatter(low_prob_members_in_predicted_non_members[x], low_prob_members_in_predicted_non_members[y],
-                             marker='+', label=f'predicted_non_members_in_db', s=10 * dot_size, c='gray')
-            axis.scatter(high_prob_members[x], high_prob_members[y], label=f'members (>= {probability_threshold})',
-                         s=dot_size, c='red')
+                             marker='+', label=f'predicted_non_members_in_db', s=10 * dot_size, c='red',
+                             rasterized=True)
+            if plot_members:
+                axis.scatter(high_prob_members[x], high_prob_members[y],
+                             label=f'members (>= {probability_threshold})', s=dot_size, c='blue', rasterized=True)
             if plot_predicted_members:
                 axis.scatter(predicted_members[x], predicted_members[y], label=f'predicted_members', s=dot_size,
-                             c='blue')
+                             c='green', rasterized=True)
                 axis.scatter(low_prob_members_in_predicted_members[x], low_prob_members_in_predicted_members[y],
-                             marker='+', label=f'predicted_members_in_db', s=10 * dot_size, c='blue')
+                             marker='+', label=f'predicted_members_in_db', s=10 * dot_size, c='green', rasterized=True)
             axis.set_title(cluster_name)
             axis.set_xlabel(x)
             axis.set_ylabel(y)
@@ -157,10 +178,10 @@ def rf_advanced_practice_with_cone(data_dir,
         plot_func(ax[0, 0], 'ra', 'DEC')
 
         plot_func(ax[1, 0], 'bp_rp', 'phot_g_mean_mag')
-        for isochrone in [isochrones[5]]:
+        for isochrone in isochrones:
             ax[1, 0].plot(isochrone['bp_rp'], isochrone['Gmag'])  # , label=f'{isochrone["logAge"].values[0]}')
-        ax[1, 0].set_xlim(-0.5, 2.5)
-        ax[1, 0].set_ylim(10, 20)
+        ax[1, 0].set_xlim(0.25, 2.0)
+        ax[1, 0].set_ylim(10.5, 18.5)
         ax[1, 0].invert_yaxis()
 
         plot_func(ax[0, 1], 'pmra', 'pmdec')
@@ -168,7 +189,11 @@ def rf_advanced_practice_with_cone(data_dir,
         ax[0, 1].set_ylim(-0.2, 1.8)
 
         plot_func(ax[1, 1], 'phot_g_mean_mag', 'parallax')
-        ax[1, 1].set_ylim(-0.5, 1.0)
+        if plot_plx_error_bars:
+            ax[1, 1].errorbar(high_prob_members['phot_g_mean_mag'], high_prob_members['parallax'],
+                              yerr=high_prob_members_plx_errors, fmt='.', c='blue', rasterized=True)
+        ax[1, 1].set_ylim(-0.5, 1.25)
+        ax[1, 1].set_xlim(10.5, 18.5)
         plt.savefig('results/NGC_2509_plots.pdf')
         plt.show()
     else:
@@ -188,10 +213,13 @@ if __name__ == "__main__":
                                    isochrone_file='isochrone.dat',
                                    probability_threshold=0.9,
                                    train_columns=train_col,
-                                   plx_max_d=0.7,
-                                   pm_max_d=0.9,
-                                   isochrone_max_d=0.9,
+                                   plx_sigma=3.0,
+                                   gmag_max_d=0.2,
+                                   pm_max_d=0.5,
+                                   bp_rp_max_d=0.05,
+                                   extinction_v=0.15,
                                    cluster_name='NCG_2509',
-                                   drop_db_candidates=False,
+                                   plot_members=True,
+                                   plot_non_members=True,
                                    plot_predicted_members=True,
                                    plot_predicted_non_members=True)
