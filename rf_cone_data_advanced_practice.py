@@ -31,11 +31,38 @@ def duplicates(df1, df2):
     return combined[combined.duplicated(keep='last')]
 
 
+def load_cone_data(data_dir, cone_file):
+    practice_data_cone_file = os.path.join(data_dir, cone_file)
+
+    # create cone dataframe
+    cone_df = pd.read_csv(practice_data_cone_file)
+    return cone_df
+
+
+def load_cluster_data(data_dir, cluster_file):
+    practice_data_cluster_file = os.path.join(data_dir, cluster_file)
+
+    # create cluster dataframe
+    cluster_df = pd.read_csv(practice_data_cluster_file, sep='\t', header=61)
+    cluster_df = cluster_df.iloc[2:]
+    cluster_df = cluster_df.reset_index(drop=True)
+    return cluster_df
+
+
+def load_isochrone_data(data_dir, isochrone_file):
+    practice_data_isochrone_file = os.path.join(data_dir, isochrone_file)
+
+    # create isochrones dataframe
+    isochrones_df = pd.read_csv(practice_data_isochrone_file, delim_whitespace=True, comment='#')
+    return isochrones_df
+
+
 def rf_advanced_practice_with_cone(data_dir,
                                    cone_file,
                                    cluster_file,
                                    isochrone_file,
                                    probability_threshold,
+                                   candidate_selection_columns,
                                    train_columns,
                                    plx_sigma=3.0,
                                    gmag_max_d=1.0,
@@ -49,22 +76,9 @@ def rf_advanced_practice_with_cone(data_dir,
                                    plot_predicted_members=True,
                                    plot_predicted_non_members=True,
                                    plot_plx_error_bars=False):
-    # load practice data
-    practice_data_path = data_dir
-    practice_data_cone_file = os.path.join(practice_data_path, cone_file)
-    practice_data_cluster_file = os.path.join(practice_data_path, cluster_file)
-    practice_data_isochrone_file = os.path.join(practice_data_path, isochrone_file)
-
-    # create cone dataframe
-    cone_df = pd.read_csv(practice_data_cone_file)
-
-    # create cluster dataframe
-    cluster_df = pd.read_csv(practice_data_cluster_file, sep='\t', header=61)
-    cluster_df = cluster_df.iloc[2:]
-    cluster_df = cluster_df.reset_index(drop=True)
-
-    # create isochrones dataframe
-    isochrones_df = pd.read_csv(practice_data_isochrone_file, delim_whitespace=True, comment='#')
+    cone_df = load_cone_data(data_dir, cone_file)
+    cluster_df = load_cluster_data(data_dir, cluster_file)
+    isochrones_df = load_isochrone_data(data_dir, isochrone_file)
 
     # divide isochrones dataframe in a separate dataframe for each isochrone
     isochrones = []
@@ -76,7 +90,7 @@ def rf_advanced_practice_with_cone(data_dir,
     # divide the cone in high probability members, low probability members, candidates and non members
     high_prob_members, low_prob_members, candidates, non_members = divide_cone(cone_df,
                                                                                cluster_df,
-                                                                               train_columns,
+                                                                               candidate_selection_columns,
                                                                                probability_threshold,
                                                                                plx_sigma,
                                                                                gmag_max_d,
@@ -85,6 +99,11 @@ def rf_advanced_practice_with_cone(data_dir,
                                                                                drop_db_candidates=drop_db_candidates)
 
     high_prob_members_plx_errors = high_prob_members['parallax_error'].values
+
+    high_prob_members, low_prob_members, candidates, non_members = [df[train_columns] for df in [high_prob_members,
+                                                                                                 low_prob_members,
+                                                                                                 candidates,
+                                                                                                 non_members]]
 
     if len(candidates) > 0:
         # correct the isochrones for distance and extinction
@@ -100,7 +119,7 @@ def rf_advanced_practice_with_cone(data_dir,
         print('Log age of the isochrone: ', isochrones[0]['logAge'].values[0])
 
         # create training data for random forest
-        train_data = pd.concat([high_prob_members[train_columns], non_members], ignore_index=True)
+        train_data = pd.concat([high_prob_members, non_members], ignore_index=True)
         x_train = train_data.values
         y_train = np.concatenate((np.ones(len(high_prob_members)), np.zeros(len(non_members))))
         n_train = x_train.shape[0]
@@ -202,17 +221,18 @@ def rf_advanced_practice_with_cone(data_dir,
 
 if __name__ == "__main__":
     # lists of columns to use for training the random forest
-    small_set = ['ra', 'DEC', 'parallax', 'pmra', 'pmdec']
-    big_set = ['ra', 'DEC', 'parallax', 'pmra', 'pmdec', 'phot_g_mean_mag', 'bp_rp', 'ruwe']
-
-    train_col = big_set
+    train_columns_small = ['ra', 'DEC', 'parallax', 'pmra', 'pmdec']
+    train_columns_big = ['ra', 'DEC', 'parallax', 'pmra', 'pmdec', 'phot_g_mean_mag', 'bp_rp', 'ruwe']
+    candidate_select_columns = ['ra', 'DEC', 'parallax', 'parallax_error', 'pmra', 'pmdec', 'phot_g_mean_mag', 'bp_rp',
+                                'ruwe']
 
     rf_advanced_practice_with_cone(data_dir='practice_data',
                                    cone_file='NGC_2509_cone.csv',
                                    cluster_file='NGC_2509.tsv',
                                    isochrone_file='isochrone.dat',
                                    probability_threshold=0.9,
-                                   train_columns=train_col,
+                                   candidate_selection_columns=candidate_select_columns,
+                                   train_columns=train_columns_big,
                                    plx_sigma=3.0,
                                    gmag_max_d=0.2,
                                    pm_max_d=0.5,
