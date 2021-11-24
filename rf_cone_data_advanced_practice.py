@@ -3,7 +3,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestClassifier
-from filter_cone_data import divide_cone
+from filter_cone_data import divide_cone, load_cone_data, load_cluster_data
 
 
 def isochrone_correction(isochrones, distance, extinction_v):
@@ -29,24 +29,6 @@ def isochrone_correction(isochrones, distance, extinction_v):
 def duplicates(df1, df2):
     combined = df1.append(df2)
     return combined[combined.duplicated(keep='last')]
-
-
-def load_cone_data(data_dir, cone_file):
-    practice_data_cone_file = os.path.join(data_dir, cone_file)
-
-    # create cone dataframe
-    cone_df = pd.read_csv(practice_data_cone_file)
-    return cone_df
-
-
-def load_cluster_data(data_dir, cluster_file):
-    practice_data_cluster_file = os.path.join(data_dir, cluster_file)
-
-    # create cluster dataframe
-    cluster_df = pd.read_csv(practice_data_cluster_file, sep='\t', header=61)
-    cluster_df = cluster_df.iloc[2:]
-    cluster_df = cluster_df.reset_index(drop=True)
-    return cluster_df
 
 
 def load_isochrone_data(data_dir, isochrone_file):

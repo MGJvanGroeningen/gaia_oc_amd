@@ -1,4 +1,32 @@
 import numpy as np
+import pandas as pd
+import random
+import os
+
+
+def normalize(dataframe, labels_not_normalized=None):
+    data_norm = (dataframe - dataframe.mean()) / dataframe.std()
+    if labels_not_normalized is not None:
+        data_norm[labels_not_normalized] = dataframe[labels_not_normalized]
+    return data_norm
+
+
+def load_cone_data(data_dir, cone_file):
+    practice_data_cone_file = os.path.join(data_dir, cone_file)
+
+    # create cone dataframe
+    cone_df = pd.read_csv(practice_data_cone_file)
+    return cone_df
+
+
+def load_cluster_data(data_dir, cluster_file):
+    practice_data_cluster_file = os.path.join(data_dir, cluster_file)
+
+    # create cluster dataframe
+    cluster_df = pd.read_csv(practice_data_cluster_file, sep='\t', header=61)
+    cluster_df = cluster_df.iloc[2:]
+    cluster_df = cluster_df.reset_index(drop=True)
+    return cluster_df
 
 
 def isochrone_distance_rule(df, max_distance_bp_rp, max_distance_gmag):
@@ -81,20 +109,6 @@ def make_candidate_rule(member_df, plx_sigma, gmag_max_d, pm_max_d, bp_rp_max_d)
     return candidate_rule
 
 
-def make_rule(distance_rule, *rule_args):
-    candidate_rule = distance_rule(*rule_args)
-    names = rule_args[3:]
-
-    def rule(row):
-        accept = False
-        args = [row[name] for name in names]
-        if candidate_rule(*args):
-            accept = True
-        return accept
-
-    return rule
-
-
 def make_high_prob_member_df(cone_df, cluster_df, candidate_selection_columns, probability_threshold):
     high_prob_member_source_ids = cluster_df[(cluster_df['PMemb'].astype(np.float32) >=
                                               probability_threshold)]['Source'].astype(np.int64).values
@@ -128,6 +142,113 @@ def make_non_member_df(cone_df,
     non_member_df = field_df[field_df.apply(not_candidate, axis=1)]
 
     return non_member_df
+
+
+def generate_training_data(data_dir,
+                           cone_file,
+                           cluster_file,
+                           probability_threshold,
+                           candidate_selection_columns,
+                           plx_sigma,
+                           gmag_max_d,
+                           pm_max_d,
+                           bp_rp_max_d):
+    cone_df = load_cone_data(data_dir, cone_file)
+    cluster_df = load_cluster_data(data_dir, cluster_file)
+
+    cluster = make_high_prob_member_df(cone_df, cluster_df, candidate_selection_columns, probability_threshold)
+    cluster['member'] = 1
+
+    combined_rule = make_candidate_rule(cluster, plx_sigma, gmag_max_d, pm_max_d, bp_rp_max_d)
+    noise = make_non_member_df(cone_df, cluster, candidate_selection_columns, combined_rule)
+    noise['member'] = 0
+
+    train = []
+
+    n_cluster_sources = len(cluster)
+    n_noise_sources = len(noise)
+
+    print(n_cluster_sources, n_noise_sources)
+
+    # concat everything to compute ang coord and normalize
+    all_data = pd.concat((cluster, noise), sort=False, ignore_index=True)
+
+    all_data_normlz = normalize(all_data, ['member'])
+
+    cluster_normalized = all_data_normlz[all_data_normlz["member"] == 1][candidate_selection_columns].to_numpy()
+    noise_normalized = all_data_normlz[all_data_normlz["member"] == 0][candidate_selection_columns].to_numpy()
+
+    min_support_size = 5
+    max_support_size = 50
+
+    for neg_ex in range(n_cluster_sources):
+        size_support_set = random.randint(min_support_size, min(int(n_cluster_sources), max_support_size))
+
+        index_support = random.sample(list(np.arange(n_cluster_sources)), size_support_set)
+        reference_points = cluster_normalized[index_support, :].copy()
+        train.append((noise_normalized[neg_ex], 0, reference_points.copy()))
+
+    for pos_ex in range(n_noise_sources):
+        idx_pos = random.randint(0, n_cluster_sources - 1)
+
+        size_support_set = random.randint(min_support_size, min(int(n_cluster_sources), max_support_size))
+
+        list_of_indexes = list(np.arange(n_cluster_sources))
+        list_of_indexes.remove(idx_pos)
+
+        index_support = random.sample(list_of_indexes, size_support_set)
+        reference_points = cluster_normalized[index_support, :].copy()
+        train.append((cluster_normalized[idx_pos], 1, reference_points.copy()))
+
+    return train
+
+
+def generate_candidate_data(data_dir,
+                            cone_file,
+                            cluster_file,
+                            probability_threshold,
+                            candidate_selection_columns,
+                            plx_sigma,
+                            gmag_max_d,
+                            pm_max_d,
+                            bp_rp_max_d):
+    cone_df = load_cone_data(data_dir, cone_file)
+    cluster_df = load_cluster_data(data_dir, cluster_file)
+
+    cluster = make_high_prob_member_df(cone_df, cluster_df, candidate_selection_columns, probability_threshold)
+    cluster['candidate'] = 0
+
+    field = make_field_df(cone_df, cluster, candidate_selection_columns)
+
+    candidate_rule = make_candidate_rule(cluster, plx_sigma, gmag_max_d, pm_max_d, bp_rp_max_d)
+    candidates = field[field.apply(candidate_rule, axis=1)]
+    candidates['candidate'] = 1
+
+    n_cluster_sources = len(cluster)
+    n_candidate_sources = len(candidates)
+
+    print(n_candidate_sources)
+
+    all_data = pd.concat((cluster, candidates), sort=False, ignore_index=True)
+
+    all_data_normlz = normalize(all_data, ['candidate'])
+
+    cluster_normalized = all_data_normlz[all_data_normlz["candidate"] == 0][candidate_selection_columns].to_numpy()
+    candidate_normalized = all_data_normlz[all_data_normlz["candidate"] == 1][candidate_selection_columns].to_numpy()
+
+    min_support_size = 5
+    max_support_size = 50
+
+    candidate_set = []
+
+    for candidate in range(n_candidate_sources):
+        size_support_set = random.randint(min_support_size, min(int(n_cluster_sources), max_support_size))
+
+        index_support = random.sample(list(np.arange(n_cluster_sources)), size_support_set)
+        reference_points = cluster_normalized[index_support, :].copy()
+        candidate_set.append((candidate_normalized[candidate], reference_points.copy()))
+
+    return candidate_set
 
 
 def divide_cone(cone_df,
