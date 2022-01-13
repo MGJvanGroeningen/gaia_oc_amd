@@ -2,3 +2,8 @@
 practice_data/NGC_2509.tsv
 practice_data/NGC_2509_cone.csv
 results
+log_dir
+log_dir_archive
+csv
+saved_models
+testing.py
