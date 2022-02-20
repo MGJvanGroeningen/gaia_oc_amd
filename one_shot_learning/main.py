@@ -227,14 +227,19 @@ def main(cluster_name, data_dir, save_dir, train=True, load_from_csv=False, load
 # try to runs on multiple computers
 
 if __name__ == "__main__":
+    if os.getcwd().split('/')[2] == 'mvgroeningen':
+        data_dir = '/data1/mvgroeningen/amd/data'
+        save_dir = '/data1/mvgroeningen/amd'
+        print('Running on strw')
+    else:
+        data_dir = os.path.join(os.path.dirname(os.getcwd()), 'data')
+        save_dir = os.getcwd()
+        print('Running at home')
+
     np.random.seed(42)
 
-    main_dir = os.path.dirname(os.getcwd())
-    data_dir = os.path.join(main_dir, 'data')
-
-    save_dir = os.getcwd()
-
     # clusters = ['NGC_752', 'NGC_2509', 'Collinder_394', 'Ruprecht_33', 'IC_2714', 'Ruprecht_135', 'NGC_1605']
+
     clusters = ['NGC_1605']
 
     train = True
