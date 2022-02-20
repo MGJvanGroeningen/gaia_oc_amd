@@ -47,7 +47,7 @@ else:
 
     members_df = members_df.rename(columns={'cluster': 'Cluster', 'source_id': 'Source', 'proba': 'PMemb'})
 
-save_dir = os.path.join(data_path, 'members_2')
+save_dir = os.path.join(data_path, 'compare_members')
 if not os.path.exists(save_dir):
     os.mkdir(save_dir)
 

@@ -44,7 +44,7 @@ def main(cluster_name, data_dir, save_dir, train=True, load_from_csv=False, load
 
     print('Cluster:', cluster_name)
 
-    compare_members_path = os.path.join(data_dir, 'members_2', cluster_name + '.csv')
+    compare_members_path = os.path.join(data_dir, 'compare_members', cluster_name + '.csv')
     if os.path.exists(compare_members_path):
         print('Comparison cluster exists')
     else:
