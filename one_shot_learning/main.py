@@ -42,9 +42,14 @@ def main(cluster_name, data_dir, save_dir, train=True, load_from_csv=False, load
     members_path = os.path.join(data_dir, 'members', cluster_name + '.csv')
     isochrone_path = os.path.join(data_dir, 'isochrones', 'isochrones.dat')
     cluster_path = os.path.join(data_dir, 'cluster_parameters.tsv')
+    results_dir = os.path.join(save_dir, 'results')
+    saved_models_dir = os.path.join(save_dir, 'saved_models')
 
     if not os.path.exists(cone_path):
         download_cone_file(cluster_name, data_dir)
+
+    if not os.path.exists(results_dir):
+        os.mkdir(results_dir)
 
     print('Cluster:', cluster_name)
 
@@ -138,7 +143,6 @@ def main(cluster_name, data_dir, save_dir, train=True, load_from_csv=False, load
         config = configs[0]
 
         # load model
-        saved_models_dir = os.path.join(save_dir, 'saved_models')
         save_filename = write_save_filename(saved_models_dir, cluster_name, config)
 
         model = D5(config['hidden_size'], x_dim=x_dim, pool='mean', out_dim=2)
@@ -175,8 +179,9 @@ def main(cluster_name, data_dir, save_dir, train=True, load_from_csv=False, load
     old_members = members[members['PMemb'] >= plot_prob_threshold].copy()
     new_members = pd.concat((old_members, member_candidates), sort=False, ignore_index=True)
 
-    if not os.path.exists(os.path.join('results', cluster_name)):
-        os.mkdir(os.path.join('results', cluster_name))
+    cluster_results_dir = os.path.join(save_dir, 'results', cluster_name)
+    if not os.path.exists(cluster_results_dir):
+        os.mkdir(cluster_results_dir)
 
     r_t = plot_density_profile(cluster_name, save_dir, [members, new_members], plot_prob_threshold, cluster_kwargs,
                                run_suffix=suffix, plot=plot, save=save_plots)
