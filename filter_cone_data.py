@@ -1,6 +1,7 @@
-import os
 import numpy as np
 import pandas as pd
+import time
+from math import ceil
 from tqdm import tqdm
 
 astrometric_value_fields = ['ra', 'dec', 'parallax', 'pmra', 'pmdec']
@@ -15,7 +16,7 @@ photometric_value_fields = ['phot_g_mean_flux', 'phot_bp_mean_flux', 'phot_rp_me
 photometric_error_fields = ['phot_g_mean_flux_error', 'phot_bp_mean_flux_error', 'phot_rp_mean_flux_error']
 photometric_fields = photometric_value_fields + photometric_error_fields
 
-other_fields = ['source_id', 'ruwe', 'phot_g_mean_mag', 'bp_rp']
+other_fields = ['source_id', 'ruwe', 'phot_g_mean_mag', 'bp_rp', 'PMemb']
 
 all_fields = astrometric_fields + photometric_fields + other_fields
 
@@ -31,110 +32,115 @@ fields = {'astrometric': astrometric_value_fields,
           'plot': plot_fields}
 
 
-def normalize(dataframe, labels_not_normalized=None, all_data=None):
-    if all_data is not None:
-        data_norm = (dataframe - all_data.mean()) / all_data.std()
-    else:
-        data_norm = (dataframe - dataframe.mean()) / dataframe.std()
-    if labels_not_normalized is not None:
-        data_norm[labels_not_normalized] = dataframe[labels_not_normalized]
-    return data_norm
-
-
-def load_cone_data(data_dir, cone_file):
-    practice_data_cone_file = os.path.join(data_dir, cone_file)
-
+def load_cone_data(cone_path, chunksize):
     # create cone dataframe
-    cone_df = pd.read_csv(practice_data_cone_file)
-    cone_df.columns = cone_df.columns.str.lower()
+    cone_df = pd.read_csv(cone_path, chunksize=chunksize)
     return cone_df
 
 
-def load_cluster_data(data_dir, cluster_file):
-    practice_data_cluster_file = os.path.join(data_dir, cluster_file)
-
+def load_cluster_data(cluster_path):
     # create cluster dataframe
-    cluster_df = pd.read_csv(practice_data_cluster_file, sep='\t', header=61)
-    cluster_df = cluster_df.iloc[2:]
-    cluster_df = cluster_df.reset_index(drop=True)
+    cluster_df = pd.read_csv(cluster_path)
+    # cluster_df = pd.read_csv(cluster_path, sep='\t', header=61)
+    # cluster_df = cluster_df.iloc[2:]
+    # cluster_df = cluster_df.reset_index(drop=True)
     return cluster_df
 
 
-def load_isochrone_data(data_dir, isochrone_file):
-    practice_data_isochrone_file = os.path.join(data_dir, isochrone_file)
-
+def load_isochrone_data(isochrone_path):
     # create isochrones dataframe
-    isochrones_df = pd.read_csv(practice_data_isochrone_file, delim_whitespace=True, comment='#')
+    isochrones_df = pd.read_csv(isochrone_path, delim_whitespace=True, comment='#')
     return isochrones_df
 
 
-def calculate_intersects(points, point0, point1):
-    n_sources = len(points)
+def get_cluster_parameters(cluster_parameters_path, cluster_name):
+    cluster_params_df = pd.read_csv(cluster_parameters_path, sep='\t', header=50, skipinitialspace=True)
+    cluster_params_df = cluster_params_df.astype(str).iloc[2:].reset_index(drop=True).applymap(lambda x: x.strip())
+    cluster_params_df = cluster_params_df.drop(cluster_params_df[cluster_params_df['AgeNN'].str.strip() == 'nan'].index)
 
-    xs = points[:, 0]
-    ys = points[:, 1]
+    float_columns = {column: np.float32 for column in ['RA_ICRS', 'DE_ICRS', 'pmRA*', 'pmDE', 'plx', 'AgeNN', 'AVNN',
+                                                       'DMNN', 'DistPc']}
 
-    if point0[0] > point1[0]:
-        point0, point1 = point1, point0
+    cluster_params_df = cluster_params_df.astype(float_columns)
+    cluster_params_df = cluster_params_df.astype({'nbstars07': np.int32})
 
-    x0 = point0[0]
-    y0 = point0[1]
+    params = cluster_params_df[cluster_params_df['Cluster'] == cluster_name]
 
-    x1 = point1[0]
-    y1 = point1[1]
+    cluster_parameters = {'ra': params['RA_ICRS'].values[0],
+                          'dec': params['DE_ICRS'].values[0],
+                          'age': params['AgeNN'].values[0],
+                          'a_v': params['AVNN'].values[0],
+                          'plx': params['plx'].values[0],
+                          'dm': params['DMNN'].values[0],
+                          'dist': params['DistPc'].values[0]}
 
-    if x0 == x1:
-        x_intersects = np.tile(x0, n_sources)
-        y_intersects = ys
-    elif y0 == y1:
-        x_intersects = xs
-        y_intersects = np.tile(y0, n_sources)
-    else:
-        a = (y1 - y0) / (x1 - x0)
-        b = y0 - a * x0
-        perp_a = - 1 / a
-        perp_b = ys - perp_a * xs
-
-        x_intersects = (perp_b - b) / (a - perp_a)
-        y_intersects = a * x_intersects + b
-    intersect_points = np.concatenate((x_intersects[:, None], y_intersects[:, None]), axis=1)
-
-    return intersect_points
+    return cluster_parameters
 
 
-def point_line_section_delta(point, point0, point1):
-    intersect_point = calculate_intersects(np.array([point]), point0, point1)[0]
+def ellipse_isochrone_contacts(point, isochrone_pairs, x_scale, y_scale):
+    x = point[0]
+    y = point[1]
 
-    if point0[0] < intersect_point[0] < point1[0]:
-        return intersect_point - point
-    else:
-        d0 = np.sqrt(np.sum(np.square(point0 - point)))
-        d1 = np.sqrt(np.sum(np.square(point1 - point)))
-        if d0 < d1:
-            return point0 - point
-        else:
-            return point1 - point
+    x0s = isochrone_pairs[:, 0, 0] - x
+    y0s = isochrone_pairs[:, 0, 1] - y
+    x1s = isochrone_pairs[:, 1, 0] - x
+    y1s = isochrone_pairs[:, 1, 1] - y
+
+    delta_y = y1s - y0s
+    delta_x = np.where(x1s - x0s == 0, 1, x1s - x0s)
+
+    m = delta_y / delta_x
+    c = y0s - m * x0s
+
+    # determine the parameters of the source-centered ellipse that just hits the isochrone line section
+    k = y_scale / x_scale
+    a2 = c ** 2 / (m ** 2 + k ** 2)
+    b = k * np.sqrt(a2)
+
+    # determine the coordinates of the contact point
+    x_contacts = - a2 * m * c / (a2 * m ** 2 + b ** 2)
+    y_contacts = m * x_contacts + c
+
+    contact_points = np.concatenate(((x_contacts + x)[:, None], (y_contacts + y)[:, None]), axis=1)
+
+    return contact_points
 
 
-def isochrone_distance_filter(isochrone, max_distance_bp_rp, max_distance_gmag):
-    bp_rps = isochrone['bp_rp'].values
-    gmags = isochrone['phot_g_mean_mag'].values
-    n_isochrone_points = len(isochrone)
+def norm(arr, axis=0):
+    return np.sqrt(np.sum(np.square(arr), axis=axis))
 
-    isochrone_arr = np.array([bp_rps, gmags]).T
-    scale_factors = np.array([1 / max_distance_bp_rp, 1 / max_distance_gmag])
+
+def source_isochrone_section_delta(point, isochrone_pairs, x_scale, y_scale):
+    scale_factors = np.array([1 / x_scale, 1 / y_scale])
+
+    contact_points = ellipse_isochrone_contacts(point, isochrone_pairs, x_scale, y_scale)
+    contact_point_delta = (contact_points - point) * scale_factors
+
+    delta_1 = (isochrone_pairs[:, 0] - point) * scale_factors
+    delta_2 = (isochrone_pairs[:, 1] - point) * scale_factors
+
+    closest_isochrone_point_delta = np.where(np.tile(norm(delta_1, axis=1) < norm(delta_2, axis=1), (2, 1)).T,
+                                             delta_1, delta_2)
+
+    distances = np.where(np.tile((np.min(isochrone_pairs[:, :, 0], axis=1) < contact_points[:, 0]) &
+                         (np.max(isochrone_pairs[:, :, 0], axis=1) > contact_points[:, 0]), (2, 1)).T,
+                         contact_point_delta,
+                         closest_isochrone_point_delta)
+
+    shortest_isochrone_delta = distances[np.argmin(norm(distances, axis=1))]
+    return shortest_isochrone_delta
+
+
+def isochrone_distance_filter(isochrone_pairs, max_distance_bp_rp, max_distance_gmag):
 
     def candidate_filter(row):
         bp_rp, gmag = row['bp_rp'], row['phot_g_mean_mag']
         point = np.array([bp_rp, gmag])
 
-        deltas = np.array([point_line_section_delta(point, isochrone_arr[i], isochrone_arr[i + 1])
-                           for i in range(n_isochrone_points - 1)])
-        scaled_deltas = deltas * scale_factors
-        distances = np.sum(scaled_deltas ** 2, axis=1)
+        delta = source_isochrone_section_delta(point, isochrone_pairs, max_distance_bp_rp, max_distance_gmag)
 
         candidate = False
-        if np.any(distances < 1):
+        if norm(delta) < 1:
             candidate = True
         return candidate
 
@@ -163,27 +169,47 @@ def pm_distance_filter(df, max_distance_pmra, max_distance_pmdec):
     return candidate_filter
 
 
-def plx_distance_filter(df, max_distance_gmag, plx_sigma):
-    gamgs = df['phot_g_mean_mag'].values
-    plxs = df['parallax'].values
-    plx_errors = df['parallax_error'].values
+def plx_distance_filter(df):
+    mean_plx = most_likely_value(df['parallax'], df['parallax_error'])
 
-    members = np.array([gamgs, plxs]).T
-    max_delta_squared = np.array([np.tile(np.array([max_distance_gmag]), len(plx_errors)),
-                                  (plx_sigma * plx_errors)**2]).T
+    # min_noise_distance = 0.05
 
     def plx_candidate_filter(row):
-        gmag, plx, plx_error = row['phot_g_mean_mag'], row['parallax'], row['parallax_error']
+        plx, plx_e = row['parallax'], row['parallax_error']
 
-        point = np.array([gmag, plx])
-        deltas_squared = (members - point)**2
+        plx_d = (mean_plx - plx)**2
+        max_plx_d = (3 * plx_e)**2
+        # max_plx_d = (2.0 / (-(gmag - 21.5)) ** 2.3 + min_noise_distance)**2
 
         candidate = False
-        if np.any(np.all(deltas_squared < max_delta_squared + np.array([0., (plx_sigma * plx_error)**2]), axis=1)):
+        if plx_d < max_plx_d:
             candidate = True
         return candidate
 
     return plx_candidate_filter
+
+
+# def plx_distance_filter_2(df, max_distance_gmag, plx_sigma):
+#     gmags = df['phot_g_mean_mag'].values
+#     plxs = df['parallax'].values
+#     plx_errors = df['parallax_error'].values
+#
+#     members = np.array([gmags, plxs]).T
+#     max_delta_squared = np.array([np.tile(np.array([max_distance_gmag]), len(plx_errors)),
+#                                   (plx_sigma * plx_errors)**2]).T
+#
+#     def plx_candidate_filter(row):
+#         gmag, plx, plx_error = row['phot_g_mean_mag'], row['parallax'], row['parallax_error']
+#
+#         point = np.array([gmag, plx])
+#         deltas_squared = (members - point)**2
+#
+#         candidate = False
+#         if np.any(np.all(deltas_squared < max_delta_squared + np.array([0., (plx_sigma * plx_error)**2]), axis=1)):
+#             candidate = True
+#         return candidate
+#
+#     return plx_candidate_filter
 
 
 def cmd_distance_filter(df, max_distance_bp_rp, max_distance_gmag):
@@ -208,7 +234,23 @@ def cmd_distance_filter(df, max_distance_bp_rp, max_distance_gmag):
     return candidate_filter
 
 
-def make_candidate_filter(filters):
+def make_isochrone_pairs(isochrone):
+    bp_rp_pairs = np.stack((isochrone['bp_rp'].values[:-1], isochrone['bp_rp'].values[1:]), axis=-1)
+    gmag_pairs = np.stack((isochrone['phot_g_mean_mag'].values[:-1], isochrone['phot_g_mean_mag'].values[1:]), axis=-1)
+    isochrone_pairs = np.stack((bp_rp_pairs, gmag_pairs), axis=-1)
+    return isochrone_pairs
+
+
+def make_candidate_filter(members, isochrone, candidate_filter_kwargs):
+    isochrone_pairs = make_isochrone_pairs(isochrone)
+
+    filters = [pm_distance_filter(members,
+                                  candidate_filter_kwargs['pm_max_d'],
+                                  candidate_filter_kwargs['pm_max_d']),
+               plx_distance_filter(members),
+               isochrone_distance_filter(isochrone_pairs,
+                                         candidate_filter_kwargs['bp_rp_max_d'],
+                                         candidate_filter_kwargs['gmag_max_d'])]
 
     def candidate_filter(row):
         candidate = True
@@ -222,110 +264,93 @@ def make_candidate_filter(filters):
     return candidate_filter
 
 
-def caluculate_distances(points, point0, point1, scale_factors):
-    intersect_points = calculate_intersects(points, point0, point1)
-    deltas = []
+def make_bias_filter(isochrone_pairs, bias):
 
-    for j in range(len(points)):
-        point = points[j]
-        if point0[0] < intersect_points[j][0] < point1[0]:
-            deltas.append(intersect_points[j] - point)
-        else:
-            d0 = np.sqrt(np.sum(np.square(point0 - point)))
-            d1 = np.sqrt(np.sum(np.square(point1 - point)))
-            if d0 < d1:
-                deltas.append(point0 - point)
-            else:
-                deltas.append(point1 - point)
+    def candidate_filter(row):
+        bp_rp, gmag = row['bp_rp'], row['phot_g_mean_mag']
 
-    scaled_deltas = np.array(deltas) * scale_factors
-    distances = np.sum(scaled_deltas ** 2, axis=1)
-    return distances
+        bias_scale = 1
 
+        x = bp_rp
+        y = gmag
 
-def isochrone_distances(sources, isochrone, max_distance_bp_rp, max_distance_gmag):
-    bp_rps = sources['bp_rp'].values
-    gmags = sources['phot_g_mean_mag'].values
-    n_sources = len(sources)
-    n_isochrone_points = len(isochrone)
+        left_of_isochrone = []
 
-    isochrone_bp_rps = isochrone['bp_rp'].values
-    isochrone_gmags = isochrone['phot_g_mean_mag'].values
+        for pair in isochrone_pairs:
+            if np.min(pair[:, 1]) < y < np.max(pair[:, 1]):
+                delta_y = pair[1, 1] - pair[0, 1]
+                delta_x = np.where(pair[1, 0] - pair[0, 0] == 0, 1e-8, pair[1, 0] - pair[0, 0])
 
-    isochrone_arr = np.array([isochrone_bp_rps, isochrone_gmags]).T
-    scale_factors = np.array([1 / max_distance_bp_rp, 1 / max_distance_gmag])
+                m = delta_y / delta_x
+                c = pair[0, 1] - m * pair[0, 0]
+                left_of_isochrone.append(x < (y - c) / m)
 
-    distances = np.zeros(n_sources)
-    cmd_sources = np.concatenate((bp_rps[:, None], gmags[:, None]), axis=1)
+        if len(left_of_isochrone) != 0 and all(left_of_isochrone):
+            bias_scale = (y / 21)**2.3 * bias
 
-    for i in tqdm(range(n_isochrone_points - 1), desc="Calculating isochrone distances..."):
-        isochrone_point0 = isochrone_arr[i]
-        isochrone_point1 = isochrone_arr[i + 1]
+        candidate = True
+        if bias_scale * row['isochrone_d'] > 1:
+            candidate = False
+        return candidate
 
-        new_distances = caluculate_distances(cmd_sources, isochrone_point0, isochrone_point1, scale_factors)
-
-        if i == 0:
-            distances = new_distances
-        else:
-            distances = np.min(np.stack((distances, new_distances)), axis=0)
-
-    return distances
+    return candidate_filter
 
 
-def make_hp_member_df(cone_df, cluster_df, probability_threshold):
-    high_prob_member_source_ids = cluster_df[(cluster_df['PMemb'].astype(np.float32) >=
-                                              probability_threshold)]['Source'].astype(np.int64).values
-    high_prob_member_df = cone_df[(cone_df['source_id'].isin(high_prob_member_source_ids))]
-    return high_prob_member_df[fields['all']].dropna()
+def make_member_df(cone_df, cluster_df, probability_threshold, above_threshold=True):
+    cone_df.columns = cone_df.columns.str.lower()
+    cluster_df['Source'] = cluster_df['Source'].astype(np.int64)
+    cluster_df_2 = cluster_df[['Source', 'PMemb']].copy()
+
+    members = pd.merge(cluster_df_2, cone_df, left_on='Source', right_on='source_id', how='inner',
+                       copy=False)[fields['all']].dropna()
+    hp_member_subset = members[(members['PMemb'] >= probability_threshold)].copy()
+    lp_member_subset = members[(members['PMemb'] < probability_threshold)].copy()
+    return hp_member_subset, lp_member_subset
 
 
-def make_lp_member_df(cone_df, cluster_df, probability_threshold):
-    low_prob_member_source_ids = cluster_df[(cluster_df['PMemb'].astype(np.float32) <
-                                             probability_threshold)]['Source'].astype(np.int64).values
-    low_prob_member_df = cone_df[(cone_df['source_id'].isin(low_prob_member_source_ids))]
-    return low_prob_member_df[fields['all']].dropna()
-
-
-def make_field_df(cone_df, high_prob_member_df):
-    field_df = cone_df.drop(high_prob_member_df.index)
+def make_field_df(cone_df, member_df):
+    field_df = cone_df[~cone_df['source_id'].isin(member_df['source_id'])].copy()
+    field_df['PMemb'] = 0
     return field_df[fields['all']].dropna()
 
 
-def make_noise_candidate_df(cone_df, members, isochrone, candidate_filter_kwargs):
-    field = make_field_df(cone_df, members)
-
-    filters = [pm_distance_filter(members,
-                                  candidate_filter_kwargs['pm_max_d'],
-                                  candidate_filter_kwargs['pm_max_d']),
-               plx_distance_filter(members,
-                                   candidate_filter_kwargs['gmag_max_d'],
-                                   candidate_filter_kwargs['plx_sigma']),
-               isochrone_distance_filter(isochrone,
-                                         candidate_filter_kwargs['bp_rp_max_d'],
-                                         candidate_filter_kwargs['gmag_max_d'])]
-    candidate_filter = make_candidate_filter(filters)
-
-    candidates = field[field.apply(candidate_filter, axis=1)]
-    noise = field[field.apply(lambda row: not candidate_filter(row), axis=1)]
+def make_noise_candidate_df(field, candidate_filter):
+    candidate_indices = field.apply(candidate_filter, axis=1)
+    candidates = field[candidate_indices].copy()
+    noise = field[~candidate_indices].copy()
     return noise, candidates
 
 
-def isochrone_correction(isochrones, mean_plx, extinction_v):
-    # correct the isochrones for distance and extinction
-    mean_distance = 1000 / mean_plx
-    isochrone_distance = mean_distance
+def most_likely_value(values, errors):
+    return np.sum(values / errors ** 2) / np.sum(1 / errors ** 2)
 
-    # print('\nMean distance of isochrone: ', isochrone_distance, ' pc')
 
-    extinction_g = 0.83627 * extinction_v
-    extinction_bp = 1.08337 * extinction_v
-    extinction_rp = 0.6343 * extinction_v
+def danielski_g(a0, colour):
+    c1, c2, c3, c4, c5, c6, c7 = 0.9761, -0.1704, 0.0086, 0.0011, -0.0438, 0.0013, 0.0099
+    k = c1 + c2 * colour + c3 * colour ** 2 + c4 * colour ** 3 + c5 * a0 + c6 * a0 ** 2 + c7 * colour * a0
+    return k * a0
 
-    distance_modulus = 5 * np.log10(0.80 * isochrone_distance) - 5
 
-    gmag_correction = distance_modulus + extinction_g
-    bpmag_correction = distance_modulus + extinction_bp
-    rpmag_correction = distance_modulus + extinction_rp
+def danielski_bp(a0, colour):
+    c1, c2, c3, c4, c5, c6, c7 = 1.1517, -0.0871, -0.0333, 0.0173, -0.0230, 0.0006, 0.0043
+    k = c1 + c2 * colour + c3 * colour ** 2 + c4 * colour ** 3 + c5 * a0 + c6 * a0 ** 2 + c7 * colour * a0
+    return k * a0
+
+
+def danielski_rp(a0, colour):
+    c1, c2, c3, c4, c5, c6, c7 = 0.6104, -0.0170, -0.0026, -0.0017, -0.0078, 0.00005, 0.0006
+    k = c1 + c2 * colour + c3 * colour ** 2 + c4 * colour ** 3 + c5 * a0 + c6 * a0 ** 2 + c7 * colour * a0
+    return k * a0
+
+
+def isochrone_correction(isochrones, distance_modulus, extinction_v):
+    # extinction_g = 0.83627 * extinction_v
+    # extinction_bp = 1.08337 * extinction_v
+    # extinction_rp = 0.6343 * extinction_v
+
+    gmag_correction = distance_modulus  # + extinction_g
+    bpmag_correction = distance_modulus  # + extinction_bp
+    rpmag_correction = distance_modulus  # + extinction_rp
 
     for isochrone in isochrones:
         isochrone['Gmag'] += gmag_correction
@@ -337,30 +362,217 @@ def isochrone_correction(isochrones, mean_plx, extinction_v):
     return isochrones
 
 
-def make_isochrone(data_dir, isochrone_file, mean_plx, extinction_v, cutoff):
-    isochrones_df = load_isochrone_data(data_dir, isochrone_file)
-    isochrones = []
-    for age in list(set(isochrones_df['logAge'].values)):
-        isochrones.append(isochrones_df[(isochrones_df['logAge'] == age)].iloc[:cutoff])
-    isochrone = isochrone_correction(isochrones, mean_plx, extinction_v=extinction_v)[0]
+def make_isochrone(isochrone_path, age, z, dm, extinction_v):
+    isochrones_df = load_isochrone_data(isochrone_path)
+    ages = np.array(list(set(isochrones_df['logAge'].values)))
+    zs = np.array(list(set(isochrones_df['Zini'].values)))
+
+    closest_age = ages[np.argmin(np.abs(ages - age))]
+    closest_z = zs[np.argmin(np.abs(zs - z))]
+
+    isochrone = isochrones_df[(isochrones_df['logAge'] == closest_age) &
+                              (isochrones_df['Zini'] == closest_z)].copy()
+
+    isochrone = isochrone_correction([isochrone], dm, extinction_v=extinction_v)[0].iloc[5:]
+    previous_bp_rp = np.inf
+    end = -1
+    for idx, bp_rp in enumerate(isochrone['bp_rp']):
+        if bp_rp > 2.5 and bp_rp > previous_bp_rp:
+            end = idx
+            break
+        previous_bp_rp = bp_rp
+
+    isochrone = isochrone.iloc[:end]
+
     return isochrone
 
 
-def parse_data(data_dir, cone_file, cluster_file, isochrone_file, probability_threshold, candidate_filter_kwargs):
-    cone_df = load_cone_data(data_dir, cone_file)
-    cluster_df = load_cluster_data(data_dir, cluster_file)
+def isochrone_delta_f(isochrone, candidate_filter_kwargs):
 
-    hp_members = make_hp_member_df(cone_df, cluster_df, probability_threshold)
-    lp_members = make_lp_member_df(cone_df, cluster_df, probability_threshold)
+    isochrone_pairs = make_isochrone_pairs(isochrone)
 
-    mean_plx = np.mean(hp_members['parallax'].values)
-    isochrone = make_isochrone(data_dir, isochrone_file, mean_plx, extinction_v=0.13, cutoff=135)
-    noise, candidates = make_noise_candidate_df(cone_df, hp_members, isochrone, candidate_filter_kwargs)
+    bp_rp_max_d = candidate_filter_kwargs['bp_rp_max_d']
+    gmag_max_d = candidate_filter_kwargs['gmag_max_d']
 
-    for sources in [lp_members, hp_members, noise, candidates]:
-        sources['isochrone_d'] = isochrone_distances(sources,
-                                                     isochrone,
-                                                     candidate_filter_kwargs['bp_rp_max_d'],
-                                                     candidate_filter_kwargs['gmag_max_d'])
+    def isochrone_delta(row):
+        bp_rp, gmag = row['bp_rp'], row['phot_g_mean_mag']
+        point = np.array([bp_rp, gmag])
 
-    return lp_members, hp_members, noise, candidates, isochrone
+        delta = source_isochrone_section_delta(point, isochrone_pairs, bp_rp_max_d, gmag_max_d)
+        return delta
+
+    return isochrone_delta
+
+
+def mean_pm_f(members):
+    mean_pmra = most_likely_value(members['pmra'], members['pmra_error'])
+    mean_pmdec = most_likely_value(members['pmdec'], members['pmdec_error'])
+
+    def pm_distance(row):
+        pmra, pmdec = row['pmra'], row['pmdec']
+        pm_d = np.sqrt((pmra - mean_pmra) ** 2 + (pmdec - mean_pmdec) ** 2)
+        return pm_d
+
+    return pm_distance
+
+
+def mean_plx_f(members):
+    mean_plx = most_likely_value(members['parallax'], members['parallax_error'])
+
+    def plx_distance(row):
+        plx = row['parallax']
+        plx_e = row['parallax_error']
+        plx_d = np.exp(- ((plx - mean_plx) / plx_e)**2 / 2) / (np.sqrt(2 * np.pi) * plx_e)
+        return plx_d
+
+    return plx_distance
+
+
+def ra_dec_to_xy(ra, dec, ra_c, dec_c, d):
+    x = d * np.sin(ra - ra_c) * np.cos(dec)
+    y = d * (np.cos(dec_c) * np.sin(dec) - np.sin(dec_c) * np.cos(dec) * np.cos(ra - ra_c))
+    return x, y
+
+
+def mean_ra_dec_f(cluster_kwargs):
+    rad_per_deg = np.pi / 180
+
+    d = cluster_kwargs['dist']
+    ra_c = cluster_kwargs['ra'] * rad_per_deg
+    dec_c = cluster_kwargs['dec'] * rad_per_deg
+
+    def plx_distance(row):
+        ra = row['ra'] * rad_per_deg
+        dec = row['dec'] * rad_per_deg
+
+        x, y = ra_dec_to_xy(ra, dec, ra_c, dec_c, d)
+
+        ra_dec_d = np.sqrt(x**2 + y**2)
+        return ra_dec_d
+
+    return plx_distance
+
+
+def extinction_correction(sources, cluster_kwargs):
+    extinction_g = danielski_g(cluster_kwargs['a_v'], sources['bp_rp'])
+    extinction_bp = danielski_bp(cluster_kwargs['a_v'], sources['bp_rp'])
+    extinction_rp = danielski_rp(cluster_kwargs['a_v'], sources['bp_rp'])
+
+    sources['phot_g_mean_mag'] -= extinction_g
+    sources['bp_rp'] -= extinction_bp - extinction_rp
+    return sources
+
+
+def parse_members(cone_path, members_path, probability_threshold, cluster_kwargs, n_chunks, chunk_size):
+    # Load the cluster
+    cluster_df = load_cluster_data(members_path)
+
+    print('Cluster sources:', len(cluster_df))
+
+    time.sleep(0.5)
+
+    with load_cone_data(cone_path, chunksize=chunk_size) as reader:
+        # Create a high and low probability member set
+        hp_member_chunks = []
+        lp_member_chunks = []
+        for chunk in tqdm(reader, total=n_chunks, desc='Creating member sets... '):
+            hp_member_chunk, lp_member_chunk = make_member_df(chunk, cluster_df, probability_threshold)
+            hp_member_chunks.append(hp_member_chunk)
+            lp_member_chunks.append(lp_member_chunk)
+        hp_members = pd.concat(hp_member_chunks, ignore_index=True)
+        lp_members = pd.concat(lp_member_chunks, ignore_index=True)
+
+        for sources in [hp_members, lp_members]:
+            extinction_correction(sources, cluster_kwargs)
+
+    time.sleep(0.5)
+
+    print(f'High probability members (>{probability_threshold}):', len(hp_members))
+    print('Total members:', len(hp_members) + len(lp_members))
+    print('Missing cluster sources:', len(cluster_df) - (len(hp_members) + len(lp_members)))
+
+    time.sleep(0.5)
+
+    return hp_members, lp_members
+
+
+def parse_candidates(cone_path, hp_members, isochrone, cluster_kwargs, candidate_filter_kwargs, noise_per_chunk,
+                     chunk_size, n_chunks):
+    with load_cone_data(cone_path, chunksize=chunk_size) as reader:
+        # Use the isochrone and high probability members to select noise (and candidate) sources
+        candidate_chunks = []
+        noise_chunks = []
+        candidate_filter = make_candidate_filter(hp_members, isochrone, candidate_filter_kwargs)
+
+        for chunk in tqdm(reader, total=n_chunks, desc='Creating candidates and noise sets... '):
+            chunk.columns = chunk.columns.str.lower()
+            field = make_field_df(chunk, hp_members)
+            extinction_correction(field, cluster_kwargs)
+            noise, candidates = make_noise_candidate_df(field, candidate_filter)
+
+            if len(noise) > noise_per_chunk:
+                noise = noise.sample(noise_per_chunk)
+
+            candidate_chunks.append(candidates)
+            noise_chunks.append(noise)
+
+        candidates = pd.concat(candidate_chunks, ignore_index=True)
+        noise = pd.concat(noise_chunks, ignore_index=True)
+
+    candidates['PMemb'] = 0
+    noise['PMemb'] = 0
+
+    print('Candidates:', len(candidates))
+    print('Noise:', len(noise))
+
+    return candidates, noise
+
+
+def add_train_fields(parsed_sources, isochrone, candidate_filter_kwargs, cluster_kwargs):
+    # Add a number of auxiliary fields (isochrone delta, parallax distance, proper motion distance)
+    isochrone_delta = isochrone_delta_f(isochrone, candidate_filter_kwargs)
+    pm_distance = mean_pm_f(parsed_sources['hp_members'])
+    plx_distance = mean_plx_f(parsed_sources['hp_members'])
+    ra_dec_distance = mean_ra_dec_f(cluster_kwargs)
+
+    print('Adding training fields... ', end='')
+    t0 = time.time()
+    for subset in parsed_sources:
+        if len(parsed_sources[subset]) > 0:
+            parsed_sources[subset][['bp_rp_d', 'gmag_d']] = parsed_sources[subset].apply(isochrone_delta, axis=1, result_type='expand')
+            parsed_sources[subset]['pm_d'] = parsed_sources[subset].apply(pm_distance, axis=1)
+            parsed_sources[subset]['plx_d'] = parsed_sources[subset].apply(plx_distance, axis=1)
+            parsed_sources[subset]['ra_dec_d'] = parsed_sources[subset].apply(ra_dec_distance, axis=1)
+    print(f'Done in {np.round(time.time() - t0, 2)} sec')
+
+    return parsed_sources
+
+
+def number_of_chunks(cone_path, chunk_size):
+    with open(cone_path) as reader:
+        n_cone_sources = sum(1 for _ in reader)
+    print('Cone sources:', n_cone_sources)
+    n_chunks = int(ceil(n_cone_sources / chunk_size))
+    return n_chunks
+
+
+def parse_data(cone_path, members_path, isochrone, probability_threshold, candidate_filter_kwargs, cluster_kwargs,
+               max_noise=10000, chunk_size=1000000):
+    if 'PMemb' not in fields['all']:
+        fields['all'].append('PMemb')
+
+    n_chunks = number_of_chunks(cone_path, chunk_size)
+
+    hp_members, lp_members = parse_members(cone_path, members_path, probability_threshold, cluster_kwargs, n_chunks,
+                                           chunk_size)
+    noise_per_chunk = int(max_noise / n_chunks)
+    candidates, noise = parse_candidates(cone_path, hp_members, isochrone, cluster_kwargs, candidate_filter_kwargs,
+                                         noise_per_chunk, chunk_size, n_chunks)
+
+    # Combine subsets in a dictionary
+    parsed_sources = {'lp_members': lp_members,
+                      'hp_members': hp_members,
+                      'noise': noise,
+                      'candidates': candidates}
+
+    return parsed_sources

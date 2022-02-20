@@ -1,7 +1,18 @@
 import numpy as np
 import pandas as pd
 from scipy.stats import multivariate_normal
-from filter_cone_data import normalize, fields
+from filter_cone_data import fields
+from tqdm import tqdm
+
+
+def normalize(dataframe, labels_not_normalized=None, all_data=None):
+    if all_data is not None:
+        data_norm = (dataframe - all_data.mean()) / all_data.std()
+    else:
+        data_norm = (dataframe - dataframe.mean()) / dataframe.std()
+    if labels_not_normalized is not None:
+        data_norm[labels_not_normalized] = dataframe[labels_not_normalized]
+    return data_norm
 
 
 def generate_rf_input(members, noise, candidates, train_fields, test_fraction=0.3):
@@ -41,39 +52,59 @@ def label_test_sources(dataset, test_fraction):
     return n_train_sources, n_test_sources
 
 
-def append_neg_example(data_list, neg_idx, min_support_size, max_support_size, n_cluster_sources, cluster, noise):
-    size_support_set = np.random.randint(min_support_size, min(int(n_cluster_sources), max_support_size))
+def append_neg_example(data_list, neg_idx, min_support_size, max_support_size, n_member_sources, members, noise,
+                       train_on_pmemb):
+    size_support_set = np.random.randint(min_support_size, min(int(n_member_sources), max_support_size))
 
-    index_support = np.random.choice(list(np.arange(n_cluster_sources)), size_support_set, replace=False)
-    reference_points = cluster[index_support, :].copy()
-    data_list.append((noise[neg_idx], 0, reference_points.copy()))
+    index_support = np.random.choice(list(np.arange(n_member_sources)), size_support_set, replace=False)
+    if train_on_pmemb:
+        reference_points = members[index_support, :].copy()
+        data_list.append((np.concatenate((noise[neg_idx], np.array([1.]))), 0, reference_points.copy()))
+    else:
+        reference_points = members[index_support, :-1].copy()
+        data_list.append((noise[neg_idx], 0, reference_points.copy()))
 
 
-def append_pos_example(data_list, min_support_size, max_support_size, n_cluster_sources, cluster):
-    idx_pos = np.random.randint(0, n_cluster_sources - 1)
+def append_pos_example(data_list, min_support_size, max_support_size, n_member_sources, members, member_probs,
+                       train_on_pmemb):
+    idx_pos = np.random.randint(0, n_member_sources - 1)
 
-    size_support_set = np.random.randint(min_support_size, min(int(n_cluster_sources - 1), max_support_size))
+    size_support_set = np.random.randint(min_support_size, min(int(n_member_sources - 1), max_support_size))
 
-    list_of_indexes = list(np.arange(n_cluster_sources))
+    list_of_indexes = list(np.arange(n_member_sources))
     list_of_indexes.remove(idx_pos)
 
     index_support = np.random.choice(list_of_indexes, size_support_set, replace=False)
-    reference_points = cluster[index_support, :].copy()
-    data_list.append((cluster[idx_pos], 1, reference_points.copy()))
+    if train_on_pmemb:
+        reference_points = members[index_support, :].copy()
+        data_list.append((np.concatenate((members[idx_pos, :-1], np.array([1.]))), member_probs[idx_pos],
+                          reference_points.copy()))
+    else:
+        reference_points = members[index_support, :-1].copy()
+        data_list.append((members[idx_pos, :-1], member_probs[idx_pos], reference_points.copy()))
 
 
-def generate_nn_input(members, noise, candidates, train_fields, test_fraction,
+def generate_nn_input(members, noise, candidates, train_fields, test_fraction, max_members, train_on_pmemb=True,
                       min_support_size=5, max_support_size=50):
     all_sources = pd.concat((members, noise, candidates), sort=False, ignore_index=True)
 
-    members_normalized = normalize(members, all_data=all_sources)
-    noise_normalized = normalize(noise, all_data=all_sources)
+    members_normalized = normalize(members, labels_not_normalized=['PMemb'], all_data=all_sources)
+    noise_normalized = normalize(noise, labels_not_normalized=['PMemb'], all_data=all_sources)
+
+    n_pos_train_samples = int(max_members * (1 - test_fraction))
+    n_pos_test_samples = int(max_members * test_fraction)
 
     n_train_members, n_test_members = label_test_sources(members_normalized, test_fraction)
     n_train_noise, n_test_noise = label_test_sources(noise_normalized, test_fraction)
 
-    train_members = members_normalized[members_normalized['test'] == 0][train_fields].to_numpy()
-    test_members = members_normalized[members_normalized['test'] == 1][train_fields].to_numpy()
+    train_members = members_normalized[members_normalized['test'] == 0]
+    test_members = members_normalized[members_normalized['test'] == 1]
+
+    train_member_probs = train_members['PMemb'].to_numpy()
+    trest_member_probs = test_members['PMemb'].to_numpy()
+
+    train_members = train_members[train_fields + ['PMemb']].to_numpy()
+    test_members = test_members[train_fields + ['PMemb']].to_numpy()
 
     train_noise = noise_normalized[noise_normalized['test'] == 0][train_fields].to_numpy()
     test_noise = noise_normalized[noise_normalized['test'] == 1][train_fields].to_numpy()
@@ -83,19 +114,19 @@ def generate_nn_input(members, noise, candidates, train_fields, test_fraction,
 
     for neg_train_ex in range(n_train_noise):
         append_neg_example(train, neg_train_ex, min_support_size, max_support_size, n_train_members,
-                           train_members, train_noise)
+                           train_members, train_noise, train_on_pmemb)
 
     for neg_test_ex in range(n_test_noise):
         append_neg_example(test, neg_test_ex, min_support_size, max_support_size, n_test_members,
-                           test_members, test_noise)
+                           test_members, test_noise, train_on_pmemb)
 
-    for _ in range(n_train_members):
+    for _ in range(n_pos_train_samples):
         append_pos_example(train, min_support_size, max_support_size, n_train_members,
-                           train_members)
+                           train_members, train_member_probs, train_on_pmemb)
 
-    for _ in range(n_test_members):
+    for _ in range(n_pos_test_samples):
         append_pos_example(test, min_support_size, max_support_size, n_test_members,
-                           test_members)
+                           test_members, trest_member_probs, train_on_pmemb)
 
     return train, test
 
@@ -116,7 +147,7 @@ def flux_to_mag(flux, band):
 
 
 def sample_candidate_data(df, sample_photometric=False):
-    sample_df = df[fields['all'] + ['isochrone_d']].copy().dropna()
+    sample_df = df.copy().dropna()
 
     n_sources = sample_df.shape[0]
     astrometric_dim = len(fields['astrometric'])
@@ -177,29 +208,35 @@ def sample_candidate_data(df, sample_photometric=False):
     return sample_df
 
 
-def generate_candidate_samples(members, noise, candidates, train_fields, n_samples,
+def generate_candidate_samples(members, noise, candidates, train_fields, n_samples, train_on_pmemb,
                                min_support_size=5, max_support_size=50):
     all_sources = pd.concat((members, noise, candidates), sort=False, ignore_index=True)
 
-    members_normalized = normalize(members, all_data=all_sources)[train_fields].to_numpy()
+    members_normalized = normalize(members, labels_not_normalized=['PMemb'],
+                                   all_data=all_sources)[train_fields + ['PMemb']].to_numpy()
 
     n_member_sources = len(members)
     n_candidate_sources = len(candidates)
 
     candidate_set = [[] for _ in range(n_samples)]
 
-    for sample_idx in range(n_samples):
+    for sample_idx in tqdm(range(n_samples), total=n_samples, desc="Generating candidate samples..."):
         sample_candidates = sample_candidate_data(candidates)
         sample_candidates_normalized = normalize(sample_candidates, ['source_id'],
                                                  all_data=all_sources)[train_fields].to_numpy()
 
-        for candidate in range(n_candidate_sources):
+        for candidate_idx in range(n_candidate_sources):
             size_support_set = np.random.randint(min_support_size,
                                                  min(int(n_member_sources), max_support_size))
             index_support = np.random.choice(list(np.arange(n_member_sources)),
                                              size_support_set, replace=False)
-            reference_points = members_normalized[index_support, :].copy()
-            candidate_set[sample_idx].append((sample_candidates_normalized[candidate],
-                                              reference_points.copy()))
+            if train_on_pmemb:
+                reference_points = members_normalized[index_support, :].copy()
+                candidate_set[sample_idx].append((np.concatenate((sample_candidates_normalized[candidate_idx],
+                                                                  np.array([1.]))),
+                                                  reference_points.copy()))
+            else:
+                reference_points = members_normalized[index_support, :-1].copy()
+                candidate_set[sample_idx].append((sample_candidates_normalized[candidate_idx], reference_points.copy()))
 
     return candidate_set

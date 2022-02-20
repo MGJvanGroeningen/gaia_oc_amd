@@ -58,7 +58,7 @@ if __name__ == "__main__":
                      'bp_rp_max_d': 0.2}
 
     rf_advanced_practice_with_cone(data_dir='practice_data',
-                                   cone_file='NGC_2509_cone.csv',
+                                   cone_file='NGC_2509_cone.subsets',
                                    cluster_file='NGC_2509.tsv',
                                    isochrone_file='isochrone.dat',
                                    probability_threshold=0.5,
