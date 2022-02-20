@@ -1,3 +1,7 @@
+import sys
+
+sys.path.insert(1, '/home/mvgroeningen/git/gaia_oc_amd/')
+
 import torch
 import os
 import pandas as pd
