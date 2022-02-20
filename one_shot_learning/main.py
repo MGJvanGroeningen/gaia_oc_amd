@@ -138,7 +138,8 @@ def main(cluster_name, data_dir, save_dir, train=True, load_from_csv=False, load
         config = configs[0]
 
         # load model
-        save_filename = write_save_filename('saved_models', cluster_name, config)
+        saved_models_dir = os.path.join(save_dir, 'saved_models')
+        save_filename = write_save_filename(saved_models_dir, cluster_name, config)
 
         model = D5(config['hidden_size'], x_dim=x_dim, pool='mean', out_dim=2)
         model.load_state_dict(torch.load(save_filename))
