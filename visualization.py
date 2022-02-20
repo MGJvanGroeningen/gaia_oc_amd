@@ -44,8 +44,9 @@ def fit_king_model(x, y):
 
 def save_csv(cluster_name, save_dir, members_df, noise_df, member_candidates_df, non_member_candidates_df, run_suffix=None,
              combined=True):
-    if not os.path.exists(os.path.join('results', cluster_name)):
-        os.mkdir(os.path.join(save_dir, 'results', cluster_name))
+    cluster_save_dir = os.path.join(save_dir, 'results', cluster_name)
+    if not os.path.exists(cluster_save_dir):
+        os.mkdir(cluster_save_dir)
 
     if run_suffix is not None:
         suffix = '_' + run_suffix
@@ -61,10 +62,10 @@ def save_csv(cluster_name, save_dir, members_df, noise_df, member_candidates_df,
             source['id'] = idx
 
         cone_df = pd.concat(sources, sort=False, ignore_index=True)
-        cone_df.to_csv(os.path.join(save_dir, 'results', cluster_name, 'cone' + suffix + '.csv'))
+        cone_df.to_csv(os.path.join(cluster_save_dir, 'cone' + suffix + '.csv'))
     else:
         for source, label in zip(sources, source_labels):
-            source.to_csv(os.path.join(save_dir, 'results', cluster_name, f'{label}{suffix}.csv'))
+            source.to_csv(os.path.join(cluster_save_dir, f'{label}{suffix}.csv'))
 
 
 def load_csv(cluster_name, save_dir, run_suffix=None):
