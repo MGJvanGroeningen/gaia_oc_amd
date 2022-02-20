@@ -40,20 +40,23 @@ def main(cluster_name, data_dir, save_dir, train=True, load_from_csv=False, load
 
     cone_path = os.path.join(data_dir, 'cones', cluster_name + '.csv')
     members_path = os.path.join(data_dir, 'members', cluster_name + '.csv')
+    compare_members_path = os.path.join(data_dir, 'compare_members', cluster_name + '.csv')
     isochrone_path = os.path.join(data_dir, 'isochrones', 'isochrones.dat')
     cluster_path = os.path.join(data_dir, 'cluster_parameters.tsv')
+
     results_dir = os.path.join(save_dir, 'results')
     saved_models_dir = os.path.join(save_dir, 'saved_models')
+    cluster_results_dir = os.path.join(results_dir, cluster_name)
+
+    for directory in [results_dir, saved_models_dir, cluster_results_dir]:
+        if not os.path.exists(directory):
+            os.mkdir(directory)
 
     if not os.path.exists(cone_path):
         download_cone_file(cluster_name, data_dir)
 
-    if not os.path.exists(results_dir):
-        os.mkdir(results_dir)
-
     print('Cluster:', cluster_name)
 
-    compare_members_path = os.path.join(data_dir, 'compare_members', cluster_name + '.csv')
     if os.path.exists(compare_members_path):
         print('Comparison cluster exists')
     else:
@@ -173,15 +176,11 @@ def main(cluster_name, data_dir, save_dir, train=True, load_from_csv=False, load
         mean_predictions = candidates['PMemb']
 
     if save_subsets and (train or not load_from_csv):
-        save_csv(cluster_name, save_dir, members, noise, member_candidates, non_member_candidates, run_suffix=suffix)
+        save_csv(cluster_results_dir, members, noise, member_candidates, non_member_candidates, run_suffix=suffix)
 
     plot_prob_threshold = 0.5
     old_members = members[members['PMemb'] >= plot_prob_threshold].copy()
     new_members = pd.concat((old_members, member_candidates), sort=False, ignore_index=True)
-
-    cluster_results_dir = os.path.join(save_dir, 'results', cluster_name)
-    if not os.path.exists(cluster_results_dir):
-        os.mkdir(cluster_results_dir)
 
     r_t = plot_density_profile(cluster_name, save_dir, [members, new_members], plot_prob_threshold, cluster_kwargs,
                                run_suffix=suffix, plot=plot, save=save_plots)

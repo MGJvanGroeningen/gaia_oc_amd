@@ -42,11 +42,8 @@ def fit_king_model(x, y):
     return x_fit, y_fit, r_t_ml
 
 
-def save_csv(cluster_name, save_dir, members_df, noise_df, member_candidates_df, non_member_candidates_df, run_suffix=None,
+def save_csv(cluster_save_dir, members_df, noise_df, member_candidates_df, non_member_candidates_df, run_suffix=None,
              combined=True):
-    cluster_save_dir = os.path.join(save_dir, 'results', cluster_name)
-    if not os.path.exists(cluster_save_dir):
-        os.mkdir(cluster_save_dir)
 
     if run_suffix is not None:
         suffix = '_' + run_suffix
@@ -108,9 +105,6 @@ def make_plots(cluster_name, save_dir, members_df, prob_threshold, noise_df=None
                     'y': 'pmdec'},
                    {'x': 'bp_rp',
                     'y': 'phot_g_mean_mag'}]
-
-    if not os.path.exists(f'results/{cluster_name}'):
-        os.mkdir(os.path.join(save_dir, 'results', cluster_name))
 
     plot_ranges = {}
     for field in ['phot_g_mean_mag', 'parallax', 'pmra', 'pmdec', 'bp_rp']:
