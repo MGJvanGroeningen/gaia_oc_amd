@@ -4,6 +4,7 @@ sys.path.insert(1, '/home/mvgroeningen/git/gaia_oc_amd/')
 
 import torch
 import os
+import glob
 import pandas as pd
 import numpy as np
 from filter_cone_data import parse_data, get_cluster_parameters, parse_members, add_train_fields, number_of_chunks, \
@@ -245,7 +246,10 @@ if __name__ == "__main__":
 
     # clusters = ['NGC_752', 'NGC_2509', 'Collinder_394', 'Ruprecht_33', 'IC_2714', 'Ruprecht_135', 'NGC_1605']
 
-    clusters = ['NGC_1605']
+    # clusters = ['NGC_1605']
+    all_cluster_files = glob.glob(os.path.join(data_dir, 'members', '*'))
+    all_clusters = sorted([os.path.basename(cluster_file).split('.')[0] for cluster_file in all_cluster_files])
+    clusters = all_clusters[:30]
 
     train = True
     load_from_csv = False
