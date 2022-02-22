@@ -5,6 +5,7 @@ sys.path.insert(1, '/home/mvgroeningen/git/gaia_oc_amd/')
 import torch
 import os
 import glob
+import shutil
 import pandas as pd
 import numpy as np
 from filter_cone_data import parse_data, get_cluster_parameters, parse_members, add_train_fields, number_of_chunks, \
@@ -36,7 +37,7 @@ def make_hyper_param_sets(parameters, parameter_names):
 
 
 def main(cluster_name, data_dir, save_dir, train=True, load_from_csv=False, load_cp=False, remove_log_dir=False,
-         plot=False, save_subsets=False, save_plots=False):
+         plot=False, save_subsets=False, save_plots=False, remove_cone=False):
     suffix = None
 
     cone_path = os.path.join(data_dir, 'cones', cluster_name + '.csv')
@@ -178,6 +179,9 @@ def main(cluster_name, data_dir, save_dir, train=True, load_from_csv=False, load
 
     if save_subsets and (train or not load_from_csv):
         save_csv(cluster_results_dir, members, noise, member_candidates, non_member_candidates, run_suffix=suffix)
+        if os.path.exists(cone_path) and remove_cone:
+            os.remove(cone_path)
+
 
     plot_prob_threshold = 0.5
     old_members = members[members['PMemb'] >= plot_prob_threshold].copy()
@@ -249,7 +253,7 @@ if __name__ == "__main__":
     # clusters = ['NGC_1605']
     all_cluster_files = glob.glob(os.path.join(data_dir, 'members', '*'))
     all_clusters = sorted([os.path.basename(cluster_file).split('.')[0] for cluster_file in all_cluster_files])
-    clusters = all_clusters[:30]
+    clusters = all_clusters[4:30]
 
     train = True
     load_from_csv = False
@@ -258,11 +262,12 @@ if __name__ == "__main__":
     plot = False
     save_subsets = True
     save_plots = True
+    remove_cone = True
 
     cores = 1
 
     params = [(cluster, data_dir, save_dir, train, load_from_csv, load_cp, remove_log_dir, plot,
-               save_subsets, save_plots) for cluster in clusters]
+               save_subsets, save_plots, remove_cone) for cluster in clusters]
     pool = Pool(cores)
     pool.starmap(main, params)
     pool.close()
