@@ -1,8 +1,8 @@
 import numpy as np
 import pandas as pd
 import time
-from math import ceil
-from tqdm import tqdm
+import os
+from astropy.io.votable import parse
 
 astrometric_value_fields = ['ra', 'dec', 'parallax', 'pmra', 'pmdec']
 astrometric_error_fields = ['ra_error', 'dec_error', 'parallax_error', 'pmra_error', 'pmdec_error']
@@ -32,9 +32,16 @@ fields = {'astrometric': astrometric_value_fields,
           'plot': plot_fields}
 
 
-def load_cone_data(cone_path, chunksize):
+def load_cone_data(cone_path):
     # create cone dataframe
-    cone_df = pd.read_csv(cone_path, chunksize=chunksize)
+    # cone_df = pd.read_csv(cone_path, chunksize=chunksize)
+
+    print('Loading cone data...', end=' ')
+
+    cone_df = parse(cone_path)
+    cone_df = cone_df.get_first_table().to_table(use_names_over_ids=True)
+    cone_df = cone_df.to_pandas()
+    print('Done')
     return cone_df
 
 
@@ -68,6 +75,8 @@ def get_cluster_parameters(cluster_parameters_path, cluster_name):
 
     cluster_parameters = {'ra': params['RA_ICRS'].values[0],
                           'dec': params['DE_ICRS'].values[0],
+                          'pmra': params['pmRA*'].values[0],
+                          'pmdec': params['pmDE'].values[0],
                           'age': params['AgeNN'].values[0],
                           'a_v': params['AVNN'].values[0],
                           'plx': params['plx'].values[0],
@@ -170,14 +179,15 @@ def pm_distance_filter(df, max_distance_pmra, max_distance_pmdec):
 
 
 def plx_distance_filter(df):
-    mean_plx = most_likely_value(df['parallax'], df['parallax_error'])
-
+    cluster_mean_plx = most_likely_value(df['parallax'], df['parallax_error'])
+    cluster_std_plx_2 = (cluster_mean_plx * (1 - 1 / (1 + 0.03 * cluster_mean_plx))) ** 2
     # min_noise_distance = 0.05
 
     def plx_candidate_filter(row):
-        plx, plx_e = row['parallax'], row['parallax_error']
+        plx = row['parallax']
+        plx_e = np.sqrt(row['parallax_error']**2 + cluster_std_plx_2)
 
-        plx_d = (mean_plx - plx)**2
+        plx_d = (cluster_mean_plx - plx)**2
         max_plx_d = (3 * plx_e)**2
         # max_plx_d = (2.0 / (-(gmag - 21.5)) ** 2.3 + min_noise_distance)**2
 
@@ -296,7 +306,7 @@ def make_bias_filter(isochrone_pairs, bias):
     return candidate_filter
 
 
-def make_member_df(cone_df, cluster_df, probability_threshold, above_threshold=True):
+def make_member_df(cone_df, cluster_df, probability_threshold):
     cone_df.columns = cone_df.columns.str.lower()
     cluster_df['Source'] = cluster_df['Source'].astype(np.int64)
     cluster_df_2 = cluster_df[['Source', 'PMemb']].copy()
@@ -343,7 +353,7 @@ def danielski_rp(a0, colour):
     return k * a0
 
 
-def isochrone_correction(isochrones, distance_modulus, extinction_v):
+def isochrone_correction(isochrones, distance_modulus):
     # extinction_g = 0.83627 * extinction_v
     # extinction_bp = 1.08337 * extinction_v
     # extinction_rp = 0.6343 * extinction_v
@@ -362,7 +372,7 @@ def isochrone_correction(isochrones, distance_modulus, extinction_v):
     return isochrones
 
 
-def make_isochrone(isochrone_path, age, z, dm, extinction_v):
+def make_isochrone(isochrone_path, age, z, dm):
     isochrones_df = load_isochrone_data(isochrone_path)
     ages = np.array(list(set(isochrones_df['logAge'].values)))
     zs = np.array(list(set(isochrones_df['Zini'].values)))
@@ -373,7 +383,7 @@ def make_isochrone(isochrone_path, age, z, dm, extinction_v):
     isochrone = isochrones_df[(isochrones_df['logAge'] == closest_age) &
                               (isochrones_df['Zini'] == closest_z)].copy()
 
-    isochrone = isochrone_correction([isochrone], dm, extinction_v=extinction_v)[0].iloc[5:]
+    isochrone = isochrone_correction([isochrone], dm)[0].iloc[5:]
     previous_bp_rp = np.inf
     end = -1
     for idx, bp_rp in enumerate(isochrone['bp_rp']):
@@ -417,12 +427,13 @@ def mean_pm_f(members):
 
 
 def mean_plx_f(members):
-    mean_plx = most_likely_value(members['parallax'], members['parallax_error'])
+    cluster_mean_plx = most_likely_value(members['parallax'], members['parallax_error'])
+    cluster_std_plx_2 = (cluster_mean_plx * (1 - 1 / (1 + 0.01 * cluster_mean_plx)))**2
 
     def plx_distance(row):
         plx = row['parallax']
-        plx_e = row['parallax_error']
-        plx_d = np.exp(- ((plx - mean_plx) / plx_e)**2 / 2) / (np.sqrt(2 * np.pi) * plx_e)
+        plx_e = np.sqrt(row['parallax_error']**2 + cluster_std_plx_2)
+        plx_d = np.exp(- ((plx - cluster_mean_plx) / plx_e)**2 / 2) / (np.sqrt(2 * np.pi) * plx_e)
         return plx_d
 
     return plx_distance
@@ -432,6 +443,33 @@ def ra_dec_to_xy(ra, dec, ra_c, dec_c, d):
     x = d * np.sin(ra - ra_c) * np.cos(dec)
     y = d * (np.cos(dec_c) * np.sin(dec) - np.sin(dec_c) * np.cos(dec) * np.cos(ra - ra_c))
     return x, y
+
+
+def projected_coordinates(members, cluster_kwargs):
+    rad_per_deg = np.pi / 180
+
+    ra = members['ra'] * rad_per_deg
+    dec = members['dec'] * rad_per_deg
+
+    if cluster_kwargs is not None:
+        d = cluster_kwargs['dist']
+        ra_c = cluster_kwargs['ra'] * rad_per_deg
+        dec_c = cluster_kwargs['dec'] * rad_per_deg
+    else:
+        d = 1000 / (most_likely_value(members['parallax'], members['parallax_error']) + 0.029)
+        ra_c = most_likely_value(members['ra'], members['ra_error']) * rad_per_deg
+        dec_c = most_likely_value(members['dec'], members['dec_error']) * rad_per_deg
+
+    x, y = ra_dec_to_xy(ra, dec, ra_c, dec_c, d)
+    return x.values, y.values
+
+
+def crop_member_candidates(member_candidates, r_t, prob_threshold, cluster_kwargs):
+    x, y = projected_coordinates(member_candidates, cluster_kwargs)
+    member_candidates['r'] = np.sqrt(x ** 2 + y ** 2)
+    cropped_member_candidates = member_candidates[(member_candidates['r'] <= r_t) &
+                                                  (member_candidates['PMemb'] >= prob_threshold)].copy()
+    return cropped_member_candidates
 
 
 def mean_ra_dec_f(cluster_kwargs):
@@ -463,61 +501,30 @@ def extinction_correction(sources, cluster_kwargs):
     return sources
 
 
-def parse_members(cone_path, members_path, probability_threshold, cluster_kwargs, n_chunks, chunk_size):
-    # Load the cluster
-    cluster_df = load_cluster_data(members_path)
+def parse_members(cone_df, members_df, probability_threshold, cluster_kwargs):
+    print('Cluster sources:', len(members_df))
+    print('Cone sources', len(cone_df))
 
-    print('Cluster sources:', len(cluster_df))
+    hp_members, lp_members = make_member_df(cone_df, members_df, probability_threshold)
 
-    time.sleep(0.5)
-
-    with load_cone_data(cone_path, chunksize=chunk_size) as reader:
-        # Create a high and low probability member set
-        hp_member_chunks = []
-        lp_member_chunks = []
-        for chunk in tqdm(reader, total=n_chunks, desc='Creating member sets... '):
-            hp_member_chunk, lp_member_chunk = make_member_df(chunk, cluster_df, probability_threshold)
-            hp_member_chunks.append(hp_member_chunk)
-            lp_member_chunks.append(lp_member_chunk)
-        hp_members = pd.concat(hp_member_chunks, ignore_index=True)
-        lp_members = pd.concat(lp_member_chunks, ignore_index=True)
-
-        for sources in [hp_members, lp_members]:
-            extinction_correction(sources, cluster_kwargs)
-
-    time.sleep(0.5)
+    for sources in [hp_members, lp_members]:
+        extinction_correction(sources, cluster_kwargs)
 
     print(f'High probability members (>{probability_threshold}):', len(hp_members))
     print('Total members:', len(hp_members) + len(lp_members))
-    print('Missing cluster sources:', len(cluster_df) - (len(hp_members) + len(lp_members)))
-
-    time.sleep(0.5)
+    print('Missing cluster sources:', len(members_df) - (len(hp_members) + len(lp_members)))
 
     return hp_members, lp_members
 
 
-def parse_candidates(cone_path, hp_members, isochrone, cluster_kwargs, candidate_filter_kwargs, noise_per_chunk,
-                     chunk_size, n_chunks):
-    with load_cone_data(cone_path, chunksize=chunk_size) as reader:
-        # Use the isochrone and high probability members to select noise (and candidate) sources
-        candidate_chunks = []
-        noise_chunks = []
-        candidate_filter = make_candidate_filter(hp_members, isochrone, candidate_filter_kwargs)
+def parse_candidates(cone_df, hp_members, isochrone, cluster_kwargs, candidate_filter_kwargs, max_noise):
+    candidate_filter = make_candidate_filter(hp_members, isochrone, candidate_filter_kwargs)
+    field = make_field_df(cone_df, hp_members)
+    extinction_correction(field, cluster_kwargs)
+    noise, candidates = make_noise_candidate_df(field, candidate_filter)
 
-        for chunk in tqdm(reader, total=n_chunks, desc='Creating candidates and noise sets... '):
-            chunk.columns = chunk.columns.str.lower()
-            field = make_field_df(chunk, hp_members)
-            extinction_correction(field, cluster_kwargs)
-            noise, candidates = make_noise_candidate_df(field, candidate_filter)
-
-            if len(noise) > noise_per_chunk:
-                noise = noise.sample(noise_per_chunk)
-
-            candidate_chunks.append(candidates)
-            noise_chunks.append(noise)
-
-        candidates = pd.concat(candidate_chunks, ignore_index=True)
-        noise = pd.concat(noise_chunks, ignore_index=True)
+    if len(noise) > max_noise:
+        noise = noise.sample(max_noise)
 
     candidates['PMemb'] = 0
     noise['PMemb'] = 0
@@ -539,7 +546,8 @@ def add_train_fields(parsed_sources, isochrone, candidate_filter_kwargs, cluster
     t0 = time.time()
     for subset in parsed_sources:
         if len(parsed_sources[subset]) > 0:
-            parsed_sources[subset][['bp_rp_d', 'gmag_d']] = parsed_sources[subset].apply(isochrone_delta, axis=1, result_type='expand')
+            parsed_sources[subset][['bp_rp_d', 'gmag_d']] = parsed_sources[subset].apply(isochrone_delta, axis=1,
+                                                                                         result_type='expand')
             parsed_sources[subset]['pm_d'] = parsed_sources[subset].apply(pm_distance, axis=1)
             parsed_sources[subset]['plx_d'] = parsed_sources[subset].apply(plx_distance, axis=1)
             parsed_sources[subset]['ra_dec_d'] = parsed_sources[subset].apply(ra_dec_distance, axis=1)
@@ -548,30 +556,26 @@ def add_train_fields(parsed_sources, isochrone, candidate_filter_kwargs, cluster
     return parsed_sources
 
 
-def number_of_chunks(cone_path, chunk_size):
-    with open(cone_path) as reader:
-        n_cone_sources = sum(1 for _ in reader)
-    print('Cone sources:', n_cone_sources)
-    n_chunks = int(ceil(n_cone_sources / chunk_size))
-    return n_chunks
+def parse_data(cone_path, members_path, compare_members_path, isochrone, probability_threshold, candidate_filter_kwargs,
+               cluster_kwargs, max_noise=10000):
+    cone_df = load_cone_data(cone_path)
+    members_df = load_cluster_data(members_path)
 
+    hp_members, lp_members = parse_members(cone_df, members_df, probability_threshold, cluster_kwargs)
 
-def parse_data(cone_path, members_path, isochrone, probability_threshold, candidate_filter_kwargs, cluster_kwargs,
-               max_noise=10000, chunk_size=1000000):
-    if 'PMemb' not in fields['all']:
-        fields['all'].append('PMemb')
+    if os.path.exists(compare_members_path):
+        compare_df = load_cluster_data(compare_members_path)
+        compare_members, _ = parse_members(cone_df, compare_df, probability_threshold, cluster_kwargs)
+    else:
+        compare_members = pd.DataFrame()
 
-    n_chunks = number_of_chunks(cone_path, chunk_size)
-
-    hp_members, lp_members = parse_members(cone_path, members_path, probability_threshold, cluster_kwargs, n_chunks,
-                                           chunk_size)
-    noise_per_chunk = int(max_noise / n_chunks)
-    candidates, noise = parse_candidates(cone_path, hp_members, isochrone, cluster_kwargs, candidate_filter_kwargs,
-                                         noise_per_chunk, chunk_size, n_chunks)
+    candidates, noise = parse_candidates(cone_df, hp_members, isochrone, cluster_kwargs, candidate_filter_kwargs,
+                                         max_noise)
 
     # Combine subsets in a dictionary
     parsed_sources = {'lp_members': lp_members,
                       'hp_members': hp_members,
+                      'compare_members': compare_members,
                       'noise': noise,
                       'candidates': candidates}
 
