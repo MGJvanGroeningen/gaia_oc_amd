@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 from scipy.stats import multivariate_normal
-from filter_cone_data import fields
+from data_filters import fields
 from tqdm import tqdm
 
 
@@ -161,7 +161,7 @@ def sample_candidate_data(df, sample_photometric=False):
 
     astrometric_cov_matrices = np.zeros((astrometric_dim, astrometric_dim, n_sources))
     for i in range(astrometric_dim):
-        for j in range(astrometric_dim):
+        for j in range(i, astrometric_dim):
             if i == j:
                 sigma = sample_df[fields['astrometric_error'][i]].to_numpy()
                 astrometric_cov_matrices[i, j] = sigma**2
@@ -170,7 +170,9 @@ def sample_candidate_data(df, sample_photometric=False):
                 corr = sample_df[fields['astrometric_corr'][corr_name_idx]].to_numpy()
                 sigma_i = sample_df[fields['astrometric_error'][i]].to_numpy()
                 sigma_j = sample_df[fields['astrometric_error'][j]].to_numpy()
-                astrometric_cov_matrices[i, j] = corr * sigma_i * sigma_j
+                cov = corr * sigma_i * sigma_j
+                astrometric_cov_matrices[i, j] = cov
+                astrometric_cov_matrices[j, i] = cov
 
     samples = np.zeros((n_sources, astrometric_dim + 2))
     for i in range(n_sources):
