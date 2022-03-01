@@ -3,7 +3,8 @@ from astropy.coordinates import SkyCoord
 from astroquery.gaia import Gaia
 import os
 import numpy as np
-from filter_cone_data import get_cluster_parameters, fields
+from data_filters import get_cluster_parameters, fields
+from astroquery.utils import commons
 
 
 def download_cone_file(clusters, data_path):
@@ -22,7 +23,7 @@ def download_cone_file(clusters, data_path):
     if type(clusters) is str:
         clusters = [clusters]
 
-    cone_fields = fields['all']
+    cone_fields = fields['all'].copy()
     cone_fields.remove('PMemb')
 
     for cluster in clusters:
@@ -32,9 +33,49 @@ def download_cone_file(clusters, data_path):
         print(f'Downloading {cluster} cone...', end=' ')
         cluster_kwargs = get_cluster_parameters(param_path, cluster)
         coord = SkyCoord(ra=cluster_kwargs['ra'], dec=cluster_kwargs['dec'], unit=(u.degree, u.degree), frame='icrs')
-        radius = u.Quantity(50 / cluster_kwargs['dist'] * 180 / np.pi, u.deg)
-        _ = Gaia.cone_search_async(coord, radius, output_file=os.path.join(save_dir, cluster + '.csv'),
-                                   output_format='csv', dump_to_file=True, columns=cone_fields)
+        radius = u.Quantity(60 / cluster_kwargs['dist'] * 180 / np.pi, u.deg)
+        pmra, pmdec = cluster_kwargs['pmra'], cluster_kwargs['pmdec']
+
+        output_file = os.path.join(save_dir, cluster + '.vot.gz')
+        columns = cone_fields
+
+        raHours, dec = commons.coord_to_radec(coord)
+        ra = raHours * 15.0  # Converts to degrees
+        radiusDeg = commons.radius_to_unit(radius, unit='deg')
+
+        if columns:
+            columns = ','.join(map(str, columns))
+        else:
+            columns = "*"
+
+        query = """
+                SELECT
+                      {row_limit}
+                      {columns},
+                      DISTANCE(
+                        POINT('ICRS', {ra_column}, {dec_column}),
+                        POINT('ICRS', {ra}, {dec})
+                      ) AS dist
+                FROM
+                  {table_name}
+                WHERE
+                  1 = CONTAINS(
+                    POINT('ICRS', {ra_column}, {dec_column}),
+                    CIRCLE('ICRS', {ra}, {dec}, {radius})
+                  )
+                AND sqrt(power(pmra - {pmra}, 2) + power(pmdec - {pmdec}, 2)) < 2.0
+                """.format(**{'ra_column': Gaia.MAIN_GAIA_TABLE_RA,
+                              'row_limit': "TOP {0}".format(Gaia.ROW_LIMIT) if Gaia.ROW_LIMIT > 0 else "",
+                              'dec_column': Gaia.MAIN_GAIA_TABLE_DEC, 'columns': columns, 'ra': ra, 'dec': dec,
+                              'radius': radiusDeg, 'pmra': pmra, 'pmdec': pmdec,
+                              'table_name': Gaia.MAIN_GAIA_TABLE})
+
+        _ = Gaia.launch_job_async(query=query,
+                                  output_file=output_file,
+                                  output_format="votable",
+                                  verbose=False,
+                                  dump_to_file=True,
+                                  background=False)
         print(f'done')
 
     Gaia.logout()
