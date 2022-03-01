@@ -3,6 +3,7 @@ matplotlib==3.4.3
 numpy==1.21.2
 scikit_learn==1.0
 torch==1.10.0
+torchvision
 scipy
 tqdm
 astropy
