@@ -48,9 +48,13 @@ class PermEqui2_mean(nn.Module):
         self.Lambda = nn.Linear(in_dim, out_dim, bias=False)
 
     def forward(self, x):
+        # print('pe x', x.size())
         xm = x.mean(1, keepdim=True)
+        # print('pe xm', xm.size())
         xm = self.Lambda(xm)
+        # print('pe lambda(xm)', xm.size())
         x = self.Gamma(x)
+        # print('pe Gamma(xm)', x.size())
         x = x - xm
         return x
 
@@ -194,14 +198,15 @@ class D5(nn.Module):
 
     def forward(self, x):
         # print("input:")
-        # print(x.size())
+        # print('input', x.size())
         phi_output = self.phi(x)
         # print("phi out")
-        # print(phi_output.size())
+        # print('phi_output', phi_output.size())
         sum_output = phi_output.mean(1)
         # print("sum out:")
-        # print(sum_output.size())
+        # print('sum_output', sum_output.size())
         ro_output = self.ro(sum_output)
+        # print('ro_output', ro_output.size())
         return ro_output
 
 

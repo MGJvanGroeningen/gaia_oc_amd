@@ -1,8 +1,11 @@
+import random
+import torch
 import numpy as np
 import pandas as pd
 from scipy.stats import multivariate_normal
-from data_filters import fields
+from data_filters import fields, pm_distance, plx_distance, isochrone_delta
 from tqdm import tqdm
+from torch.utils.data import Dataset, DataLoader
 
 
 def normalize(dataframe, labels_not_normalized=None, all_data=None):
@@ -15,139 +18,149 @@ def normalize(dataframe, labels_not_normalized=None, all_data=None):
     return data_norm
 
 
-def generate_rf_input(members, noise, candidates, train_fields, test_fraction=0.3):
-    n_train_members, n_test_members = label_test_sources(members, test_fraction)
-    n_train_noise, n_test_noise = label_test_sources(noise, test_fraction)
+def generate_rf_input(sources, train_fields, test_fraction=0.3, seed=42):
+    members = sources.train_members.hp()
+    noise = sources.noise
 
-    train_members = members[members['test'] == 0][train_fields]
-    test_members = members[members['test'] == 1][train_fields]
+    n_members = len(members)
+    n_noise = len(noise)
 
-    train_noise = noise[noise['test'] == 0][train_fields]
-    test_noise = noise[noise['test'] == 1][train_fields]
+    np.random.seed(seed)
+    member_test_indices = np.random.choice(np.arange(n_members), int(n_members * test_fraction), replace=False)
+    member_train_indices = np.delete(np.arange(n_members), member_test_indices, axis=0)
+    noise_test_indices = np.random.choice(np.arange(n_noise), int(n_noise * test_fraction), replace=False)
+    noise_train_indices = np.delete(np.arange(n_noise), noise_test_indices, axis=0)
+
+    train_members = members[member_train_indices][train_fields]
+    test_members = members[member_test_indices][train_fields]
+
+    train_noise = noise[noise_train_indices][train_fields]
+    test_noise = noise[noise_test_indices][train_fields]
 
     x_train = pd.concat([train_members, train_noise], ignore_index=True).to_numpy()
     x_test = pd.concat([test_members, test_noise], ignore_index=True).to_numpy()
 
-    y_train = np.concatenate((np.ones(n_train_members), np.zeros(n_train_noise)))
-    y_test = np.concatenate((np.ones(n_test_members), np.zeros(n_test_noise)))
+    y_train = np.concatenate((np.ones(len(member_train_indices)), np.zeros(len(noise_train_indices))))
+    y_test = np.concatenate((np.ones(len(member_test_indices)), np.zeros(len(noise_test_indices))))
 
-    print(f'\nTraining set size: {n_train_members + n_train_noise}')
-    print(f'\nTest set size: {n_test_members + n_test_noise}')
-
-    # create test data for random forest
-    x_eval = candidates[train_fields].values
-    n_eval = x_eval.shape[0]
-    print(f'Eval set size: {n_eval}')
-
-    return x_train, y_train, x_test, y_test, x_eval
+    return x_train, y_train, x_test, y_test
 
 
-def label_test_sources(dataset, test_fraction):
-    dataset['test'] = 0
-    n_sources = len(dataset)
-    n_test_sources = int(test_fraction * n_sources)
-    n_train_sources = n_sources - n_test_sources
-    test_indices = np.random.choice(n_sources, n_test_sources, replace=False)
-    dataset.iloc[test_indices, dataset.columns.get_loc('test')] = 1
-    return n_train_sources, n_test_sources
+def generate_rf_candidate_samples(sources, train_fields, pm_dist, plx_dist, isochrone_del, n_samples):
+    candidate_evaluation_set = []
+    for _ in tqdm(range(n_samples), total=n_samples, desc="Generating candidate samples..."):
+        sample_candidates_normalized = sample_candidate_data(sources, train_fields, pm_dist, plx_dist, isochrone_del,
+                                                             sample_photometric=True)
+        print(sample_candidates_normalized.shape)
+        candidate_evaluation_set.append(sample_candidates_normalized)
+
+    return candidate_evaluation_set
 
 
-def append_neg_example(data_list, neg_idx, min_support_size, max_support_size, n_member_sources, members, noise,
-                       train_on_pmemb):
-    size_support_set = np.random.randint(min_support_size, min(int(n_member_sources), max_support_size))
+class OSLDataset(Dataset):
+    def __init__(self, sources, train_fields, test_fraction, max_members=2000, max_noise=10000, min_support_size=5,
+                 max_support_size=50, test=True, seed=42):
+        members = sources.train_members.hp()
+        noise = sources.noise
 
-    index_support = np.random.choice(list(np.arange(n_member_sources)), size_support_set, replace=False)
-    if train_on_pmemb:
-        reference_points = members[index_support, :].copy()
-        data_list.append((np.concatenate((noise[neg_idx], np.array([1.]))), 0, reference_points.copy()))
-    else:
-        reference_points = members[index_support, :-1].copy()
-        data_list.append((noise[neg_idx], 0, reference_points.copy()))
+        self.n_members = len(members)
+        self.n_noise = len(noise)
+        self.test_size = int(self.n_members * test_fraction)
 
+        np.random.seed(seed)
+        member_test_indices = np.random.choice(np.arange(self.n_members), int(self.n_members * test_fraction), replace=False)
+        member_train_indices = np.delete(np.arange(self.n_members), member_test_indices, axis=0)
 
-def append_pos_example(data_list, min_support_size, max_support_size, n_member_sources, members, member_probs,
-                       train_on_pmemb):
-    idx_pos = np.random.randint(0, n_member_sources - 1)
+        noise_test_indices = np.random.choice(np.arange(self.n_noise), int(self.n_noise * test_fraction), replace=False)
+        noise_train_indices = np.delete(np.arange(self.n_noise), noise_test_indices, axis=0)
 
-    size_support_set = np.random.randint(min_support_size, min(int(n_member_sources - 1), max_support_size))
+        if test:
+            member_sample_size = int(max_members * test_fraction)
+            noise_sample_size = int(max_noise * test_fraction)
+            member_indices = np.random.choice(member_test_indices, member_sample_size, replace=True)
+            noise_indices = np.random.choice(noise_test_indices, noise_sample_size, replace=True)
+        else:
+            member_sample_size = max_members - int(max_members * test_fraction)
+            noise_sample_size = max_noise - int(max_noise * test_fraction)
+            member_indices = np.random.choice(member_train_indices, member_sample_size, replace=True)
+            noise_indices = np.random.choice(noise_train_indices, noise_sample_size, replace=True)
 
-    list_of_indexes = list(np.arange(n_member_sources))
-    list_of_indexes.remove(idx_pos)
+        members = normalize(members[train_fields], all_data=sources.all_sources[train_fields]).to_numpy()
+        noise = normalize(noise[train_fields], all_data=sources.all_sources[train_fields]).to_numpy()
 
-    index_support = np.random.choice(list_of_indexes, size_support_set, replace=False)
-    if train_on_pmemb:
-        reference_points = members[index_support, :].copy()
-        data_list.append((np.concatenate((members[idx_pos, :-1], np.array([1.]))), member_probs[idx_pos],
-                          reference_points.copy()))
-    else:
-        reference_points = members[index_support, :-1].copy()
-        data_list.append((members[idx_pos, :-1], member_probs[idx_pos], reference_points.copy()))
+        self.dataset = []
 
+        member_indices_2 = list(np.arange(self.n_members))
+        max_support_size = min(int(self.n_members - 1), max_support_size)
+        for source_to_classify_idx in member_indices:
+            source_to_classify = members[source_to_classify_idx]
 
-def generate_nn_input(members, noise, candidates, train_fields, test_fraction, max_members, train_on_pmemb=True,
-                      min_support_size=5, max_support_size=50):
-    all_sources = pd.concat((members, noise, candidates), sort=False, ignore_index=True)
+            size_support_set = np.random.randint(min_support_size, max_support_size)
+            support_set_indices = np.random.choice(np.delete(member_indices_2, source_to_classify_idx, axis=0),
+                                                   size_support_set, replace=False)
+            support_set = members[support_set_indices]
 
-    members_normalized = normalize(members, labels_not_normalized=['PMemb'], all_data=all_sources)
-    noise_normalized = normalize(noise, labels_not_normalized=['PMemb'], all_data=all_sources)
+            nn_input = np.concatenate((support_set, np.tile(source_to_classify, (size_support_set, 1))), axis=1)
+            self.dataset.append((nn_input, [0, 1]))
 
-    n_pos_train_samples = int(max_members * (1 - test_fraction))
-    n_pos_test_samples = int(max_members * test_fraction)
+        max_support_size = min(int(self.n_members), max_support_size)
+        for source_to_classify_idx in noise_indices:
+            source_to_classify = noise[source_to_classify_idx]
 
-    n_train_members, n_test_members = label_test_sources(members_normalized, test_fraction)
-    n_train_noise, n_test_noise = label_test_sources(noise_normalized, test_fraction)
+            size_support_set = np.random.randint(min_support_size, max_support_size)
+            support_set_indices = np.random.choice(member_indices_2, size_support_set, replace=False)
+            support_set = members[support_set_indices]
 
-    train_members = members_normalized[members_normalized['test'] == 0]
-    test_members = members_normalized[members_normalized['test'] == 1]
+            nn_input = np.concatenate((support_set, np.tile(source_to_classify, (size_support_set, 1))), axis=1)
+            self.dataset.append((nn_input, [1, 0]))
 
-    train_member_probs = train_members['PMemb'].to_numpy()
-    trest_member_probs = test_members['PMemb'].to_numpy()
+        random.shuffle(self.dataset)
 
-    train_members = train_members[train_fields + ['PMemb']].to_numpy()
-    test_members = test_members[train_fields + ['PMemb']].to_numpy()
+    def __len__(self):
+        return len(self.dataset)
 
-    train_noise = noise_normalized[noise_normalized['test'] == 0][train_fields].to_numpy()
-    test_noise = noise_normalized[noise_normalized['test'] == 1][train_fields].to_numpy()
-
-    train = []
-    test = []
-
-    for neg_train_ex in range(n_train_noise):
-        append_neg_example(train, neg_train_ex, min_support_size, max_support_size, n_train_members,
-                           train_members, train_noise, train_on_pmemb)
-
-    for neg_test_ex in range(n_test_noise):
-        append_neg_example(test, neg_test_ex, min_support_size, max_support_size, n_test_members,
-                           test_members, test_noise, train_on_pmemb)
-
-    for _ in range(n_pos_train_samples):
-        append_pos_example(train, min_support_size, max_support_size, n_train_members,
-                           train_members, train_member_probs, train_on_pmemb)
-
-    for _ in range(n_pos_test_samples):
-        append_pos_example(test, min_support_size, max_support_size, n_test_members,
-                           test_members, trest_member_probs, train_on_pmemb)
-
-    return train, test
+    def __getitem__(self, item):
+        x, y = self.dataset[item]
+        return torch.FloatTensor(x), torch.FloatTensor(y)
 
 
-def flux_to_mag(flux, band):
-    g_mag_correction = 25.68836574676364
-    bp_mag_correction = 25.351388202706424
-    rp_mag_correction = 24.761920004514547
-    uncorrected_mag = -2.5 * np.log10(flux)
-    if band == 'g':
-        return uncorrected_mag + g_mag_correction
-    elif band == 'bp':
-        return uncorrected_mag + bp_mag_correction
-    elif band == 'rp':
-        return uncorrected_mag + rp_mag_correction
-    else:
-        raise ValueError(f'band {band} is unknown, use g/bp/rp')
+class OSLCandidateDataset(Dataset):
+    def __init__(self, candidates, members, min_support_size, max_support_size):
+        self.dataset = []
+        member_indices = list(np.arange(len(members)))
+        for source_to_classify in candidates:
+            size_support_set = np.random.randint(min_support_size, max_support_size)
+            support_indices = np.random.choice(member_indices, size_support_set, replace=False)
+            support_set = members[support_indices]
+            nn_input = np.concatenate((support_set, np.tile(source_to_classify, (size_support_set, 1))), axis=1)
+
+            self.dataset.append(nn_input)
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, item):
+        x = self.dataset[item]
+        return torch.FloatTensor(x)
 
 
-def sample_candidate_data(df, sample_photometric=False):
-    sample_df = df.copy().dropna()
+# def flux_to_mag(flux, band):
+#     g_mag_correction = 25.68836574676364
+#     bp_mag_correction = 25.351388202706424
+#     rp_mag_correction = 24.761920004514547
+#     uncorrected_mag = -2.5 * np.log10(flux)
+#     if band == 'g':
+#         return uncorrected_mag + g_mag_correction
+#     elif band == 'bp':
+#         return uncorrected_mag + bp_mag_correction
+#     elif band == 'rp':
+#         return uncorrected_mag + rp_mag_correction
+#     else:
+#         raise ValueError(f'band {band} is unknown, use g/bp/rp')
+
+
+def sample_candidate_data(sources, train_fields, pm_dist, plx_dist, isochrone_del, sample_photometric=False):
+    sample_df = sources.candidates.copy().dropna()
 
     n_sources = sample_df.shape[0]
     astrometric_dim = len(fields['astrometric'])
@@ -183,7 +196,6 @@ def sample_candidate_data(df, sample_photometric=False):
     sample_df[fields['astrometric']] = samples[:, :5]
 
     if sample_photometric:
-        # THIS CURRENTLY DOES NOT WORK PROPERLY
         photometric_dim = len(fields['photometric'])
         photometric_cov_matrices = np.zeros((photometric_dim, n_sources))
 
@@ -198,47 +210,35 @@ def sample_candidate_data(df, sample_photometric=False):
         for i in range(n_sources):
             photometric_mn = multivariate_normal(mean=photometric_means[:, i],
                                                  cov=photometric_cov_matrices[:, i])
-            photometric_sample = photometric_mn.rvs(1)
-            g_mag = flux_to_mag(photometric_sample[0:1], 'g')
-            bp_rp = flux_to_mag(photometric_sample[1:2], 'bp') - flux_to_mag(photometric_sample[2:3], 'rp')
+            samples[i, 5:7] = photometric_mn.rvs(1)
 
-            samples[i] = np.append((samples[i], g_mag, bp_rp), axis=0)
+        sample_df[fields['photometric']] = samples[:, 5:7]
 
-        sample_df['phot_g_mean_mag'] = samples[:, 5]
-        sample_df['bp_rp'] = samples[:, 6]
+    sample_df['pm_d'] = sample_df.apply(pm_dist, axis=1)
+    sample_df['plx_d'] = sample_df.apply(plx_dist, axis=1)
+    sample_df[['bp_rp_d', 'gmag_d']] = sample_df.apply(isochrone_del, axis=1, result_type='expand')
 
-    return sample_df
+    sample_candidates = normalize(sample_df[train_fields], all_data=sources.all_sources[train_fields]).to_numpy()
+
+    return sample_candidates
 
 
-def generate_candidate_samples(members, noise, candidates, train_fields, n_samples, train_on_pmemb,
-                               min_support_size=5, max_support_size=50):
-    all_sources = pd.concat((members, noise, candidates), sort=False, ignore_index=True)
+def generate_osl_candidate_samples(sources, cluster, isochrone, candidate_filter_kwargs, train_fields, n_samples,
+                                   min_support_size=5, max_support_size=50):
+    members = normalize(sources.train_members.hp()[train_fields], all_data=sources.all_sources[train_fields]).to_numpy()
 
-    members_normalized = normalize(members, labels_not_normalized=['PMemb'],
-                                   all_data=all_sources)[train_fields + ['PMemb']].to_numpy()
+    max_support_size = min(len(members), max_support_size)
+    candidate_evaluation_set = []
 
-    n_member_sources = len(members)
-    n_candidate_sources = len(candidates)
+    pm_dist = pm_distance(cluster)
+    plx_dist = plx_distance(cluster)
+    isochrone_del = isochrone_delta(isochrone, candidate_filter_kwargs)
 
-    candidate_set = [[] for _ in range(n_samples)]
+    for _ in tqdm(range(n_samples), total=n_samples, desc="Generating candidate samples..."):
+        candidate_sample = sample_candidate_data(sources, train_fields, pm_dist, plx_dist, isochrone_del,
+                                                 sample_photometric=True)
 
-    for sample_idx in tqdm(range(n_samples), total=n_samples, desc="Generating candidate samples..."):
-        sample_candidates = sample_candidate_data(candidates)
-        sample_candidates_normalized = normalize(sample_candidates, ['source_id'],
-                                                 all_data=all_sources)[train_fields].to_numpy()
+        candidate_evaluation_set.append(DataLoader(OSLCandidateDataset(candidate_sample, members, min_support_size,
+                                                                       max_support_size)))
 
-        for candidate_idx in range(n_candidate_sources):
-            size_support_set = np.random.randint(min_support_size,
-                                                 min(int(n_member_sources), max_support_size))
-            index_support = np.random.choice(list(np.arange(n_member_sources)),
-                                             size_support_set, replace=False)
-            if train_on_pmemb:
-                reference_points = members_normalized[index_support, :].copy()
-                candidate_set[sample_idx].append((np.concatenate((sample_candidates_normalized[candidate_idx],
-                                                                  np.array([1.]))),
-                                                  reference_points.copy()))
-            else:
-                reference_points = members_normalized[index_support, :-1].copy()
-                candidate_set[sample_idx].append((sample_candidates_normalized[candidate_idx], reference_points.copy()))
-
-    return candidate_set
+    return candidate_evaluation_set

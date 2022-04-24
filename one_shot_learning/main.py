@@ -7,15 +7,16 @@ import torch
 import os
 import glob
 import numpy as np
-from data_filters import parse_data, get_cluster_parameters, add_train_fields, make_isochrone
-from data_generation import generate_nn_input, generate_candidate_samples
+from data_filters import parse_sources, make_isochrone, Cluster, get_cluster_parameters
+from data_generation import OSLDataset, generate_osl_candidate_samples
 from models import train_nn_model, evaluate_candidates, write_save_filename
 from deepsets_zaheer import D5
-from visualization import plot_sources, print_sets, make_plots
+from visualization import plot_sources, make_plots
 from make_cone_files import download_cone_file
-from utils import save_csv, load_csv
+from utils import save_csv, load_csv, get_data_and_save_dir, data_dirs, save_dirs
 from itertools import product
 from multiprocessing import Pool
+from torch.utils.data import DataLoader
 
 
 def make_hyper_param_sets(parameters, parameter_names):
@@ -34,53 +35,27 @@ def make_hyper_param_sets(parameters, parameter_names):
     return hyper_parameter_sets
 
 
-def main(cluster_name, data_dir, save_dir, train=True, load_from_csv=False, load_cp=False, remove_log_dir=False,
-         plot=False, save_subsets=False, save_plots=False, remove_cone=False):
-    suffix = None
+def main(cluster, data_paths, save_paths, train=True, load_from_csv=False, load_cp=False,
+         remove_log_dir=False, show=False, save_subsets=False, save_plots=False, remove_cone=False):
+    if not load_from_csv and not os.path.exists(data_paths['cone']):
+        download_cone_file(cluster, data_paths)
 
-    cone_path = os.path.join(data_dir, 'cones', cluster_name + '.vot.gz')
-    members_path = os.path.join(data_dir, 'members', cluster_name + '.csv')
-    compare_members_path = os.path.join(data_dir, 'compare_members', cluster_name + '.csv')
-    isochrone_path = os.path.join(data_dir, 'isochrones', 'isochrones.dat')
-    cluster_path = os.path.join(data_dir, 'cluster_parameters.tsv')
-
-    results_dir = os.path.join(save_dir, 'results')
-    saved_models_dir = os.path.join(save_dir, 'saved_models')
-    cluster_results_dir = os.path.join(results_dir, cluster_name)
-
-    for directory in [results_dir, saved_models_dir, cluster_results_dir]:
-        if not os.path.exists(directory):
-            os.mkdir(directory)
-
-    if not load_from_csv and not os.path.exists(cone_path):
-        download_cone_file(cluster_name, data_dir)
-
-    print('Cluster:', cluster_name)
-
-    if os.path.exists(compare_members_path):
-        print('Comparison cluster exists')
-    else:
-        print('No comparison cluster exists')
+    print('Cluster:', cluster.name)
 
     # train params
-    n_epochs = 30
-    test_fraction = 0.33
+    n_epochs = 10
+    test_fraction = 0
 
     # model params
-    hs = 10
-    lr = 4e-5
-    l1 = 4e-4
+    hs = 32
+    lr = 1e-5
+    l1 = 1e-5
     weight_im = 1.
-    prob_threshold = 0.3
+    prob_threshold = 0.8
 
     train_fields = ['plx_d', 'pm_d', 'bp_rp_d', 'gmag_d', 'ruwe']
-    # train_fields = ['parallax', 'pmra', 'pmdec', 'pm_d', 'bp_rp_d', 'gmag_d', 'ruwe']
 
-    train_on_pmemb = False
-    if train_on_pmemb:
-        x_dim = 2 * (len(train_fields) + 1)
-    else:
-        x_dim = 2 * len(train_fields)
+    x_dim = 2 * len(train_fields)
 
     # hidden_sizes = [15, 20, 25]
     # lrs = [1e-4, 2e-4, 4e-4]
@@ -95,167 +70,117 @@ def main(cluster_name, data_dir, save_dir, train=True, load_from_csv=False, load
     prob_thresholds = [prob_threshold]
     x_dims = [x_dim]
 
-    params = [hidden_sizes, lrs, l1s, weight_ims, prob_thresholds, x_dims]
+    parameters = [hidden_sizes, lrs, l1s, weight_ims, prob_thresholds, x_dims]
     param_names = ['hidden_size', 'lr', 'l1', 'weight_imbalance', 'prob_threshold', 'x_dim']
 
-    configs = make_hyper_param_sets(params, param_names)
+    configs = make_hyper_param_sets(parameters, param_names)
 
     # data params
     n_max_members = 2000
-    n_max_noise = 10000
-    n_samples = 20
+    n_max_noise = 4000
+    n_samples = 10
 
-    candidate_filter_kwargs = {'plx_sigma': 3.0, 'gmag_max_d': 0.75, 'pm_max_d': 1.0, 'bp_rp_max_d': 0.3}
-    cluster_kwargs = get_cluster_parameters(cluster_path, cluster_name)
+    candidate_filter_kwargs = {'pm_d_max': 3.0, 'plx_d_max': 3.0, 'bp_rp_d_max': 0.3, 'gmag_d_max': 1.2}
 
-    print('Cluster age:', cluster_kwargs['age'])
+    print(vars(cluster))
+    print('Cluster age:', cluster.age)
 
     # Load the ischrone data and shift it in the CMD diagram using the mean parallax and extinction value
-    isochrone = make_isochrone(isochrone_path, age=cluster_kwargs['age'], z=0.015, dm=cluster_kwargs['dm'])
+    isochrone = make_isochrone(data_paths['isochrone'], age=cluster.age, dm=cluster.dm)
+    # new_field_funcs, new_field_labels = train_field_functions(cluster)
 
     if load_from_csv:
-        all_sources = load_csv(cluster_name, save_dir, suffix)
-
-        hp_members = all_sources['hp_members']
-        lp_members = all_sources['lp_members']
-        noise = all_sources['noise']
-        candidates = all_sources['candidates']
-        members_compare = all_sources['compare_members']
-
-        member_candidates = all_sources['member_candidates']
-        mean_predictions = candidates['PMemb']
+        sources = load_csv(save_paths['cluster'])
     else:
-        all_sources = parse_data(cone_path=cone_path, members_path=members_path,
-                                 compare_members_path=compare_members_path, probability_threshold=prob_threshold,
-                                 isochrone=isochrone, candidate_filter_kwargs=candidate_filter_kwargs,
-                                 cluster_kwargs=cluster_kwargs, max_noise=n_max_noise)
+        sources = parse_sources(data_paths['cone'], data_paths['train_members'], data_paths['comparison_members'],
+                                cluster=cluster, probability_threshold=prob_threshold, isochrone=isochrone,
+                                candidate_filter_kwargs=candidate_filter_kwargs)
 
-        add_train_fields(all_sources, isochrone, candidate_filter_kwargs, cluster_kwargs)
-
-        hp_members = all_sources['hp_members']
-        lp_members = all_sources['lp_members']
-        noise = all_sources['noise']
-        candidates = all_sources['candidates']
-        members_compare = all_sources['compare_members']
-
-    if plot:
-        plot_sources(cluster_name, save_dir, hp_members, prob_threshold, candidates_df=candidates,
-                     isochrone_df=isochrone, noise_df=noise, zoom=1.5, plot=plot, save=False)
+    if show:
+        plot_sources(sources, cluster, save_paths['cluster'], isochrone_df=isochrone, show_probs=False, show=show, save=False)
 
     if train:
         for config in configs:
             # create training and test datasets
-            training_dataset, testing_dataset = generate_nn_input(hp_members, noise, candidates, train_fields,
-                                                                  test_fraction, n_max_members, train_on_pmemb)
+            train_dataset = DataLoader(OSLDataset(sources, train_fields, test_fraction, n_max_members, n_max_noise,
+                                                  test=False))
+            test_dataset = DataLoader(OSLDataset(sources, train_fields, test_fraction, n_max_members, n_max_noise,
+                                                 test=True))
 
             # train the model
-            train_nn_model(training_dataset, testing_dataset, cluster_name=cluster_name, save_dir=save_dir,
+            train_nn_model(train_dataset, test_dataset, cluster_name=cluster.name, save_paths=save_paths,
                            config=config, num_epochs=n_epochs, load_checkpoint=load_cp,
                            remove_log_dir=remove_log_dir)
 
-        config = configs[0]
-
         # load model
-        save_filename = write_save_filename(saved_models_dir, cluster_name, config)
-
+        config = configs[0]
+        save_filename = write_save_filename(save_paths['model'], cluster.name, config)
         model = D5(config['hidden_size'], x_dim=x_dim, pool='mean', out_dim=2)
         model.load_state_dict(torch.load(save_filename))
 
         # sample candidate data with their astrometric variances and correlations
-        candidate_samples = generate_candidate_samples(hp_members, noise, candidates, train_fields, n_samples,
-                                                       train_on_pmemb)
+        candidate_samples = generate_osl_candidate_samples(sources, cluster, isochrone, candidate_filter_kwargs,
+                                                           train_fields, n_samples)
 
         # evaluate the model on the candidate samples and return the mean probability of being a member
-        mean_predictions = evaluate_candidates(candidate_samples, model)
+        sources.candidates['PMemb'] = evaluate_candidates(candidate_samples, model)
 
-        candidates['PMemb'] = mean_predictions
-
-        member_candidates = candidates[candidates['PMemb'] > prob_threshold].copy()
-        non_member_candidates = candidates[~candidates['source_id'].isin(member_candidates['source_id'])].copy()
-
-        if save_subsets:
-            save_csv(cluster_results_dir, hp_members, lp_members, noise, member_candidates, non_member_candidates,
-                     members_compare, run_suffix=suffix)
-
-        print(' ')
-        print(f'NEW MEMBERS (>{prob_threshold}):', len(member_candidates))
-
-        print_sets(member_candidates, lp_members, noise, candidates)
-
-        print(' ')
-        print(40 * '=')
-        print(' ')
+    if save_subsets and not load_from_csv:
+        save_csv(sources, save_paths['cluster'], cluster)
 
     if train or load_from_csv:
-        plot_prob_threshold = 0.5
-        make_plots(cluster_name, save_dir, cluster_kwargs, plot_prob_threshold, hp_members, candidates,
-                   member_candidates, members_compare, noise, isochrone, mean_predictions, suffix, plot, save_plots)
+        make_plots(sources, cluster, save_paths['cluster'], isochrone, show, save_plots)
 
-    if os.path.exists(cone_path) and remove_cone:
-        os.remove(cone_path)
+    if os.path.exists(data_paths['cone']) and remove_cone:
+        os.remove(data_paths['cone'])
 
-
-# make test set (split data at the start)
-# plot loss
-# figure out label indices
-# sample dataset a' = N(a_mean, a_sigma (+ covariance terms)) and use a for loop
-# use topcat to identify individual sources
-
-# download data based on radius (50 pc)
-# test with removing ra/dec or replace with distance to center of cluster
-# (maybe weight dimensions e.g. parallax or gmag)
-# search literature: how to deal with faint stars
-# only use astrometry for sampling
-
-# output of softmax not probability? revert to >0.5 -> 1 and <0.5 -> 0
-# implement early stopping
-# implement multiprocessing
-# check out mass segregation paper on how to present mass segregation results
-# try to runs on multiple computers
 
 if __name__ == "__main__":
-    if os.getcwd().split('/')[2] == 'mvgroeningen':
-        data_dir = '/data2/mvgroeningen/amd/data'
-        save_dir = '/data2/mvgroeningen/amd'
-        import matplotlib
-        matplotlib.use('Agg')
-        print('Running on strw')
-    else:
-        data_dir = os.path.join(os.path.dirname(os.getcwd()), 'data')
-        save_dir = os.getcwd()
-        print('Running at home')
-
+    data_folder, save_folder = get_data_and_save_dir(model_type='one_shot_learning')
     np.random.seed(42)
 
+    ts = 'cg18'
+    # ts = 't22'
+    # cs = 'cg18'
+    cs = 't22'
+
+    # all_cluster_files = glob.glob(os.path.join(data_folder, ts + '_members', '*'))
+    # all_clusters = [os.path.basename(cluster_file).split('.')[0] for cluster_file in all_cluster_files]
+
+    all_cluster_files = glob.glob(os.path.join(save_folder, 'results', '*'))
+    all_clusters = [os.path.basename(cluster_file) for cluster_file in all_cluster_files]
     # clusters = ['NGC_752', 'NGC_2509', 'Collinder_394', 'Ruprecht_33', 'IC_2714', 'Ruprecht_135', 'NGC_1605']
 
-    all_cluster_files = glob.glob(os.path.join(data_dir, 'members', '*'))
-    all_clusters = sorted([os.path.basename(cluster_file).split('.')[0] for cluster_file in all_cluster_files])
+    # clusters = ['NGC_1901']
+    clusters = all_clusters
 
-    # clusters = ['NGC_752']
-    clusters = all_clusters[30:50]
-
-    multi = True
-    train = True
-    load_from_csv = False
+    multi = False
+    train = False
+    load_from_csv = True
     load_cp = False
-    remove_log_dir = True
-    plot = True
+    remove_log_dir = False
+    show = False
     save_subsets = True
     save_plots = True
     remove_cone = False
 
     if multi:
-        cores = 3
+        cores = 1
 
-        params = [(cluster, data_dir, save_dir, train, load_from_csv, load_cp, remove_log_dir, plot,
+        params = [(cluster, data_folder, save_folder, ts, cs, train, load_from_csv, load_cp, remove_log_dir, show,
                    save_subsets, save_plots, remove_cone) for cluster in clusters]
         pool = Pool(cores)
         pool.starmap(main, params)
         pool.close()
         pool.join()
     else:
-        for cluster in clusters:
-            main(cluster_name=cluster, data_dir=data_dir, save_dir=save_dir, train=train, load_from_csv=load_from_csv,
-                 load_cp=load_cp, remove_log_dir=remove_log_dir, plot=plot, save_subsets=save_subsets,
-                 save_plots=save_plots, remove_cone=remove_cone)
+        for cluster_name in clusters:
+            data_paths = data_dirs(data_folder, cluster_name, ts, cs)
+            save_paths = save_dirs(save_folder, cluster_name)
+
+            cluster_params = get_cluster_parameters(cluster_name, data_paths['cluster'])
+            if cluster_params is not None:
+                cluster = Cluster(cluster_params)
+                main(cluster, data_paths, save_paths, train=train, load_from_csv=load_from_csv, load_cp=load_cp,
+                     remove_log_dir=remove_log_dir, show=show, save_subsets=save_subsets, save_plots=save_plots,
+                     remove_cone=remove_cone)
