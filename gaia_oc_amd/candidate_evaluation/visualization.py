@@ -204,7 +204,7 @@ def candidates_plot(ax, x, y, sources, cluster, tidal_radius=None, show_features
                zorder=-2)
 
     if show_features:
-        idx = 4
+        idx = np.random.randint(low=0, high=len(candidates))
         if x == 'pmra' or x == 'l':
             ax.annotate("", xy=(candidates[x].iloc[idx], candidates[y].iloc[idx]),
                         xytext=(getattr(cluster, x), getattr(cluster, y)),
@@ -218,12 +218,12 @@ def candidates_plot(ax, x, y, sources, cluster, tidal_radius=None, show_features
         if x == 'bp_rp':
             ax.annotate("", xy=(candidates[x].iloc[idx], candidates[y].iloc[idx]),
                         xytext=(candidates[x].iloc[idx], candidates[y].iloc[idx] +
-                                candidates['gmag_d'].iloc[idx] * 1.5),
+                                candidates['f_g'].iloc[idx] * 1.5),
                         arrowprops=dict(arrowstyle="->", linewidth=3, color='black', mutation_scale=30))
             ax.annotate("", xy=(candidates[x].iloc[idx], candidates[y].iloc[idx] +
-                                candidates['gmag_d'].iloc[idx] * 1.5),
-                        xytext=(candidates[x].iloc[idx] + candidates['bp_rp_d'].iloc[idx] * 0.5,
-                                candidates[y].iloc[idx] + candidates['gmag_d'].iloc[idx] * 1.5),
+                                candidates['f_g'].iloc[idx] * 1.5),
+                        xytext=(candidates[x].iloc[idx] + candidates['f_c'].iloc[idx] * 0.5,
+                                candidates[y].iloc[idx] + candidates['f_g'].iloc[idx] * 1.5),
                         arrowprops=dict(arrowstyle="->", linewidth=3, color='black', mutation_scale=30))
         ax.scatter(candidates[x].iloc[idx], candidates[y].iloc[idx], marker='*', s=100.0, c='red', rasterized=True,
                    zorder=3)
