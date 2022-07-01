@@ -106,4 +106,4 @@ if __name__ == "__main__":
         if show or save_plots:
             make_plots(sources, cluster, save_dir, isochrone, prob_threshold=prob_threshold, show=show, save=save_plots,
                        tidal_radius=tidal_radius, show_train_members=show_train_members)
-        print('Done')
+        print(f'done, saved in {os.path.abspath(save_dir)}')

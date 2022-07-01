@@ -1,3 +1,4 @@
+import os
 import argparse
 
 from gaia_oc_amd.data_preparation.datasets import deep_sets_datasets
@@ -48,7 +49,7 @@ if __name__ == "__main__":
                         help='The seed that determines the distribution of train and validation data.')
     parser.add_argument('--load_model', nargs='?', type=bool, default=False,
                         help='Whether to load the parameters of an already trained model, saved at "save_path".')
-    parser.add_argument('--show', nargs='?', type=bool, default=True,
+    parser.add_argument('--show', nargs='?', type=bool, default=False,
                         help='Whether to show the loss and accuracy plot.')
     parser.add_argument('--save_plot', nargs='?', type=bool, default=True,
                         help='Whether to save the loss and accuracy plot.')
@@ -86,8 +87,12 @@ if __name__ == "__main__":
     train_dataset, val_dataset = deep_sets_datasets(data_dir, cluster_names, training_features, validation_fraction,
                                                     max_members=max_members, max_non_members=max_non_members,
                                                     size_support_set=size_support_set, seed=seed)
-
+    print(' ')
     metrics = train_model(model, train_dataset, val_dataset, save_path=model_parameters_save_file, num_epochs=n_epochs,
                           lr=lr, l2=l2, weight_imbalance=weight_imbalance,
                           early_stopping_threshold=early_stopping_threshold, load_model=load_model)
+    print(f'Saved model parameters at {os.path.abspath(model_parameters_save_file)}')
     plot_loss_accuracy(metrics, plot_save_dir, show, save_plot)
+    if save_plot:
+        print(f'Created loss and accuracy plot at {os.path.abspath(os.path.join(plot_save_dir, "loss_accuracy.png"))}')
+

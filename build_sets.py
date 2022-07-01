@@ -27,14 +27,14 @@ if __name__ == "__main__":
                              'between log(age) of 6 and 10.')
     parser.add_argument('--credentials_path', nargs='?', type=str, default='gaia_credentials',
                         help='Path to file containing a username and password for logging into the ESA Gaia archive.')
-    parser.add_argument('--cluster_path', nargs='?', type=str, default='cluster_parameters.tsv',
+    parser.add_argument('--cluster_path', nargs='?', type=str, default='cluster_parameters.csv',
                         help='Path to file containing cluster properties, '
                              'i.e. 5d astrometric properties + errors + age + distance + extinction coefficient.')
-    parser.add_argument('--members_path', nargs='?', type=str, default='cg18_members.tsv',
+    parser.add_argument('--members_path', nargs='?', type=str, default='cg18_members.csv',
                         help='Path to file containing open cluster members. '
                              'Required fields are the source identity, membership probability'
                              'and the cluster to which they belong.')
-    parser.add_argument('--comparison_path', nargs='?', type=str, default='t22_members.tsv',
+    parser.add_argument('--comparison_path', nargs='?', type=str, default='t22_members.csv',
                         help='Path to file containing open cluster members, which are to be compared against. '
                              'Same requirements as for the members_path.')
     parser.add_argument('--cone_radius', nargs='?', type=float, default=60.,
@@ -146,7 +146,7 @@ if __name__ == "__main__":
             print('Loading cone data...', end=' ')
             t0 = time.time()
             cone = load_cone(cone_path, cluster)
-            print(f'done in {np.round(time.time() - t0, 1)} sec')
+            print(f'done')
 
             print('Loading member data...', end=' ')
             if os.path.exists(members_path):
@@ -205,7 +205,7 @@ if __name__ == "__main__":
                 if save_set:
                     print('Saving sets...', end=' ')
                     save_sets(data_dir, cluster, members, candidates, non_members, comparison)
-                    print(f'done')
+                    print(f'done, saved in {os.path.abspath(save_dir)}')
             else:
                 print(f'No members available! Skipping cluster {cluster.name}')
         else:
