@@ -1,14 +1,8 @@
-import os
 import numpy as np
 import pandas as pd
 
 
 def make_isochrone(isochrone_path, cluster):
-    if not isochrone_path.split('.')[-1] == 'dat':
-        log_age_floor = int(cluster.age)
-        isochrone_file = f'isochrones{log_age_floor}.dat'
-        isochrone_path = os.path.join(isochrone_path, isochrone_file)
-
     isochrones = pd.read_csv(isochrone_path,
                              names=['Zini', 'MH', 'logAge', 'Mini', 'int_IMF', 'Mass', 'logL', 'logTe', 'logg',
                                     'label', 'McoreTP', 'C_O', 'period0', 'period1', 'period2', 'period3',

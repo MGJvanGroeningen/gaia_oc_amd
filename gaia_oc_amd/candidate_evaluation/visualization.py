@@ -291,7 +291,8 @@ def members_plot(ax, x, y, sources, plot_prob_threshold, tidal_radius=None):
         new_members = sources.candidates.hp(min_prob=plot_prob_threshold)
         non_members = pd.concat((sources.non_members, sources.candidates.lp(max_prob=plot_prob_threshold)))
 
-    ax.scatter(new_members[x], new_members[y], label=f'members', s=20.0, rasterized=True, zorder=0)
+    ax.scatter(new_members[x], new_members[y], label=r'members ($p \geq$' + f'{plot_prob_threshold})', s=20.0,
+               rasterized=True, zorder=0)
     ax.scatter(non_members[x], non_members[y], label='non members', s=1.0, c='gray', alpha=0.2, rasterized=True,
                zorder=-1)
 

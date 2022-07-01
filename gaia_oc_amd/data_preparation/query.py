@@ -3,11 +3,20 @@ import numpy as np
 import astropy.units as u
 from astropy.coordinates import SkyCoord
 from astroquery.gaia import Gaia
+from astroquery.vizier import Vizier
 from astroquery.utils import commons
 
 
-def download_cones(clusters, data_dir, gaia_credentials_path, query_fields=None, table="gaiaedr3.gaia_source",
-                   cone_radius=60, pm_sigmas=10, plx_sigmas=10, verbose=False):
+def query_catalog(catalog, columns, save_path, row_limit=-1, cluster_column=None, id_column=None,
+                  prob_column=None):
+    query = Vizier(catalog=catalog, columns=columns, row_limit=row_limit).query_constraints()[0]
+    data = query.to_pandas()
+    data = data.rename(columns={cluster_column: 'cluster', id_column: 'source_id', prob_column: 'PMemb'})
+    data.to_csv(save_path)
+
+
+def cone_search(clusters, data_dir, gaia_credentials_path, query_fields=None, table="gaiaedr3.gaia_source",
+                cone_radius=60, pm_sigmas=10, plx_sigmas=10, verbose=False):
     Gaia.login(credentials_file=gaia_credentials_path)
 
     clusters_dir = os.path.join(data_dir, 'clusters')

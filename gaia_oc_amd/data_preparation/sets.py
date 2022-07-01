@@ -1,6 +1,4 @@
 import pandas as pd
-import numpy as np
-import time
 
 from gaia_oc_amd.data_preparation.candidate_selection import candidate_filter
 
@@ -50,16 +48,11 @@ class Sources:
 
 
 def candidate_and_non_members_set(cone, cluster, isochrone):
-    print('Finding candidates...', end=' ')
-    t0 = time.time()
-
     can_filter = candidate_filter(cluster, isochrone)
     candidate_indices = cone.apply(can_filter, axis=1)
 
     candidates = cone[candidate_indices].copy()
     non_members = cone[~candidate_indices].copy()
-
-    print(f'done in {np.round(time.time() - t0, 1)} sec')
     return candidates, non_members
 
 

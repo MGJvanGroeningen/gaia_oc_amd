@@ -69,8 +69,8 @@ def step(data_set, model, optimizer, criterion, epoch, mode='train'):
 
 
 def train_model(model, train_dataset, val_dataset, save_path, num_epochs=40, lr=1e-6, l2=1e-5, weight_imbalance=1.,
-                early_stopping_threshold=5, load_checkpoint=False):
-    if load_checkpoint:
+                early_stopping_threshold=5, load_model=False):
+    if load_model:
         if os.path.exists(save_path):
             model.load_state_dict(torch.load(save_path))
         else:

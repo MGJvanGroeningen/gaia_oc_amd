@@ -1,5 +1,3 @@
-import time
-import numpy as np
 import pandas as pd
 
 from gaia_oc_amd.data_preparation.sets import member_set, candidate_and_non_members_set
@@ -24,13 +22,10 @@ def parse_cone(cluster, cone, isochrone, member_ids, member_probs=None, comparis
     cluster.update_parameters(members)
     cluster.set_feature_parameters(members, max_r, pm_errors, g_delta, bp_rp_delta, source_errors)
 
-    print('Adding features... ', end=' ')
-    t0 = time.time()
     feature_functions = [phot_g_mean_mag_error(), bp_rp_error(), radius(cluster), pm_distance(cluster),
                          plx_distance(cluster), isochrone_delta(cluster, isochrone)]
     feature_labels = ['phot_g_mean_mag_error', 'bp_rp_error', 'f_r', 'f_pm', 'f_plx', ['f_c', 'f_g']]
     add_features(sources, feature_functions, feature_labels)
-    print(f'done in {np.round(time.time() - t0, 1)} sec')
 
     candidates, non_members = candidate_and_non_members_set(cone, cluster, isochrone)
     candidates = pd.concat((candidates, members))
