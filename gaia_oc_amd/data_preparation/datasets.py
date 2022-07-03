@@ -80,13 +80,9 @@ def deep_sets_datasets(data_dir, clusters, training_features, validation_fractio
 
     for cluster_name in tqdm(clusters, total=len(clusters), desc='Creating cluster(s) dataset'):
         _, members, candidates, non_members, _ = load_sets(data_dir, cluster_name)
-        # all_sources = pd.concat((candidates, non_members))
 
         members = (members[training_features].to_numpy() - global_mean) / global_std
         non_members = (non_members[training_features].to_numpy() - global_mean) / global_std
-
-        # members = normalize(members[training_features], all_data=all_sources[training_features]).to_numpy()
-        # non_members = normalize(non_members[training_features], all_data=all_sources[training_features]).to_numpy()
 
         n_members = len(members)
         n_non_members = len(non_members)
