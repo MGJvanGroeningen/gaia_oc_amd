@@ -2,11 +2,28 @@ import numpy as np
 from astropy.coordinates import SkyCoord
 
 
-def most_likely_value(values, errors):
-    return np.sum(values / errors ** 2) / np.sum(1 / errors ** 2)
+def most_likely_value(means, errors):
+    """Calculates the most probable value of quantity for which there are multiple measurements
+    and each measurement has its own uncertainty. This is gives a better estimate
+    than simply calculating the mean.
+
+    Args:
+        means (float, array): Mean values
+        errors (float, array): Uncertainty values
+
+    Returns:
+        The most likely value
+
+    """
+    return np.sum(means / errors ** 2) / np.sum(1 / errors ** 2)
 
 
 class Cluster:
+    """A class designed to contain all relevant information about an open cluster.
+
+    Args:
+        cluster_parameters (dict): Dictionary containing cluster properties.
+    """
     def __init__(self, cluster_parameters=None):
         self.name = None
 
@@ -31,6 +48,8 @@ class Cluster:
         self.std_of_pmdec_mean = None
         self.std_of_plx_mean = None
 
+        self.x_delta = None
+        self.y_delta = None
         self.pmra_delta = None
         self.pmdec_delta = None
         self.plx_delta_plus = None
@@ -45,6 +64,14 @@ class Cluster:
                 setattr(self, param, cluster_parameters[param])
 
     def update_parameters(self, members):
+        """Function that updates some (astrometric) parameters of the cluster based on a set of its members.
+        This function is useful when the properties of the provided members are more precise
+        than those of the members on which the current cluster properties are based.
+
+        Args:
+            members (pd.Dataframe): Dataframe containing members of the open cluster
+
+        """
         for param in ['ra', 'dec', 'pmra', 'pmdec', 'parallax']:
             setattr(self, param, most_likely_value(members[param], members[f'{param}_error']))
         self.dist = 1000 / self.parallax
@@ -59,6 +86,21 @@ class Cluster:
 
     def set_feature_parameters(self, members, max_r=60., pm_errors=5., g_delta=1.5, bp_rp_delta=0.5, source_errors=3.,
                                verbose=False):
+        """Function that sets the parameters which are used to calculate the training features.
+        These parameters define the zero-error boundaries between candidates and non-members.
+
+        Args:
+            members (pd.Dataframe): Dataframe containing members of the open cluster
+            max_r (float): Maximum radius, which is converted to parallax space to determine
+                the parallax zero-error boundary
+            pm_errors (float): The number of times the standard deviation in the cluster member
+                proper motion is used in the proper motion zero-error boundary
+            g_delta (float): G magnitude zero-error boundary
+            bp_rp_delta (float): BP-RP colour zero-error boundary
+            source_errors (float): The number of sigma a candidate may deviate from zero-error boundary
+            verbose (bool): Whether to print the feature parameters
+
+        """
         self.std_of_pmra_mean = np.sqrt(1 / np.sum(1 / members['pmra_error'] ** 2))
         self.std_of_pmdec_mean = np.sqrt(1 / np.sum(1 / members['pmdec_error'] ** 2))
         self.std_of_plx_mean = np.sqrt(1 / np.sum(1 / members['parallax_error'] ** 2))

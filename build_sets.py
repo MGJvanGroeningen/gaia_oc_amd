@@ -35,7 +35,7 @@ if __name__ == "__main__":
                              'Required fields are the source identity, membership probability'
                              'and the cluster to which they belong.')
     parser.add_argument('--comparison_path', nargs='?', type=str, default='t22_members.csv',
-                        help='Path to file containing open cluster members, which are to be compared against. '
+                        help='Path to file containing open cluster members, which are used for comparison. '
                              'Same requirements as for the members_path.')
     parser.add_argument('--cone_radius', nargs='?', type=float, default=60.,
                         help='Projected radius of the cone search.')
@@ -46,9 +46,23 @@ if __name__ == "__main__":
                         help='How many sigmas away from the cluster mean in parallax '
                              'to look for sources for the cone search.')
     parser.add_argument('--prob_threshold', nargs='?', type=float, default=1.0,
-                        help='Minimum threshold for the probability of members to be used for training the model.')
+                        help='Minimum threshold for the probability of members to be used for training the model. '
+                             'This threshold is exceeded if there are less than n_min_members members')
     parser.add_argument('--n_min_members', nargs='?', type=int, default=15,
-                        help='Minimum number of members per cluster to use for training.')
+                        help='Minimum number of members per cluster to use for training. This must be greater than'
+                             'the number of members used for the support set (5 by default).')
+    parser.add_argument('--members_cluster_column', nargs='?', type=str, default='Cluster',
+                        help='Column name for indicating the cluster of train member sources.')
+    parser.add_argument('--members_id_column', nargs='?', type=str, default='Source',
+                        help='Column name for indicating the identity of train member sources.')
+    parser.add_argument('--members_prob_column', nargs='?', type=str, default='PMemb',
+                        help='Column name for indicating the membership probability of train member sources.')
+    parser.add_argument('--comparison_cluster_column', nargs='?', type=str, default='Cluster',
+                        help='Column name for indicating the cluster of comparison member sources.')
+    parser.add_argument('--comparison_id_column', nargs='?', type=str, default='GaiaEDR3',
+                        help='Column name for indicating the identity of comparison member sources.')
+    parser.add_argument('--comparison_prob_column', nargs='?', type=str, default='Proba',
+                        help='Column name for indicating the membership probability of comparison member sources.')
     parser.add_argument('--can_max_r', nargs='?', type=float, default=60.,
                         help='Maximum deviation in parallax (derived from radius in parsec) from the cluster mean '
                              'to be used in candidate selection.')
@@ -63,18 +77,6 @@ if __name__ == "__main__":
                              'to be used in candidate selection.')
     parser.add_argument('--can_source_errors', nargs='?', type=float, default=3.,
                         help='How many sigma candidates may lie outside the maximum deviations.')
-    parser.add_argument('--members_cluster_column', nargs='?', type=str, default='Cluster',
-                        help='Column name for indicating the cluster of train member sources.')
-    parser.add_argument('--members_id_column', nargs='?', type=str, default='Source',
-                        help='Column name for indicating the identity of train member sources.')
-    parser.add_argument('--members_prob_column', nargs='?', type=str, default='PMemb',
-                        help='Column name for indicating the membership probability of train member sources.')
-    parser.add_argument('--comparison_cluster_column', nargs='?', type=str, default='Cluster',
-                        help='Column name for indicating the cluster of comparison member sources.')
-    parser.add_argument('--comparison_id_column', nargs='?', type=str, default='GaiaEDR3',
-                        help='Column name for indicating the identity of comparison member sources.')
-    parser.add_argument('--comparison_prob_column', nargs='?', type=str, default='Proba',
-                        help='Column name for indicating the membership probability of comparison member sources.')
     parser.add_argument('--show', nargs='?', type=bool, default=False,
                         help='Whether to show the candidates plot.')
     parser.add_argument('--show_features', nargs='?', type=bool, default=False,
@@ -88,27 +90,25 @@ if __name__ == "__main__":
 
     args_dict = vars(parser.parse_args())
 
+    # main arguments
     data_dir = args_dict['data_dir']
     cluster_names = cluster_list(args_dict['cluster_names'], data_dir)
 
+    # path arguments
     isochrone_path = find_path(args_dict['isochrone_path'], data_dir)
     credentials_path = find_path(args_dict['credentials_path'], data_dir)
     cluster_path = find_path(args_dict['cluster_path'], data_dir)
     members_path = find_path(args_dict['members_path'], data_dir)
     comparison_path = find_path(args_dict['comparison_path'], data_dir)
 
+    # cone search arguments
     cone_radius = args_dict['cone_radius']
     cone_pm_sigmas = args_dict['cone_pm_sigmas']
     cone_plx_sigmas = args_dict['cone_plx_sigmas']
 
+    # members arguments
     prob_threshold = args_dict['prob_threshold']
     n_min_members = args_dict['n_min_members']
-    max_r = args_dict['can_max_r']
-    pm_errors = args_dict['can_pm_errors']
-    g_delta = args_dict['can_g_delta']
-    bp_rp_delta = args_dict['can_bp_rp_delta']
-    source_errors = args_dict['can_source_errors']
-
     members_cluster_column = args_dict['members_cluster_column']
     members_id_column = args_dict['members_id_column']
     members_prob_column = args_dict['members_prob_column']
@@ -116,9 +116,19 @@ if __name__ == "__main__":
     comparison_id_column = args_dict['comparison_id_column']
     comparison_prob_column = args_dict['comparison_prob_column']
 
+    # candidate selection arguments
+    max_r = args_dict['can_max_r']
+    pm_errors = args_dict['can_pm_errors']
+    g_delta = args_dict['can_g_delta']
+    bp_rp_delta = args_dict['can_bp_rp_delta']
+    source_errors = args_dict['can_source_errors']
+
+    # plot arguments
     show = args_dict['show']
     show_features = args_dict['show_features']
     show_boundaries = args_dict['show_boundaries']
+
+    # save arguments
     save_plot = args_dict['save_plot']
     save_set = args_dict['save_sets']
 
@@ -131,82 +141,96 @@ if __name__ == "__main__":
     for cluster_name in cluster_names:
         print(' ')
         print('Cluster:', cluster_name)
-        print('Loading cluster paramters...', end=' ')
-        cluster_params = load_cluster_parameters(cluster_name, cluster_path)
-        if cluster_params is not None:
-            print('done')
-            cluster = Cluster(cluster_params)
+        print('Loading cluster parameters...', end=' ')
+        if os.path.exists(cluster_path):
+            cluster_params = load_cluster_parameters(cluster_name, cluster_path)
+            if cluster_params is not None:
+                print('done')
+                cluster = Cluster(cluster_params)
 
-            save_dir = os.path.join(data_dir, 'clusters', cluster.name)
-            cone_path = os.path.join(save_dir, 'cone.vot.gz')
-            if not os.path.exists(cone_path):
-                cone_search([cluster], data_dir, credentials_path, cone_radius=cone_radius, pm_sigmas=cone_pm_sigmas,
-                            plx_sigmas=cone_plx_sigmas)
+                save_dir = os.path.join(data_dir, 'clusters', cluster.name)
+                cone_path = os.path.join(save_dir, 'cone.vot.gz')
+                if not os.path.exists(cone_path):
+                    cone_search([cluster], data_dir, credentials_path, cone_radius=cone_radius,
+                                pm_sigmas=cone_pm_sigmas, plx_sigmas=cone_plx_sigmas)
 
-            print('Loading cone data...', end=' ')
-            t0 = time.time()
-            cone = load_cone(cone_path, cluster)
-            print(f'done')
-
-            print('Loading member data...', end=' ')
-            if os.path.exists(members_path):
-                members = load_members(members_path, cluster.name, cluster_column=members_cluster_column,
-                                       id_column=members_id_column, prob_column=members_prob_column)
-                hp_members = members[members['PMemb'] >= prob_threshold]
-                while len(hp_members) < n_min_members and prob_threshold >= 0.0:
-                    prob_threshold -= 0.1
-                    hp_members = members[members['PMemb'] >= prob_threshold]
-                if len(hp_members) >= n_min_members:
-                    member_ids = hp_members['source_id']
-                    member_probs = hp_members['PMemb']
-                else:
-                    member_ids, member_probs = None, None
-            else:
-                member_ids, member_probs = None, None
-
-            if member_ids is not None:
-                if os.path.exists(comparison_path):
-                    comparison = load_members(comparison_path, cluster.name, cluster_column=comparison_cluster_column,
-                                              id_column=comparison_id_column, prob_column=comparison_prob_column)
-                    if len(comparison) > 0:
-                        comparison_ids = comparison['source_id']
-                        comparison_probs = comparison['PMemb']
-                    else:
-                        comparison_ids, comparison_probs = None, None
-                else:
-                    comparison_ids, comparison_probs = None, None
+                print('Loading cone data...', end=' ')
+                cone = load_cone(cone_path, cluster)
                 print(f'done')
 
-                isochrone = make_isochrone(isochrone_path, cluster)
+                print('Loading member data...', end=' ')
+                if os.path.exists(members_path):
+                    members = load_members(members_path, cluster.name, cluster_column=members_cluster_column,
+                                           id_column=members_id_column, prob_column=members_prob_column)
+                    hp_members = members[members['PMemb'] >= prob_threshold]
+                    if len(hp_members) >= n_min_members:
+                        member_ids = hp_members['source_id']
+                        member_probs = hp_members['PMemb']
+                        print(f'done')
 
-                print('Parsing cone... ', end=' ')
-                t0 = time.time()
-                members, candidates, non_members, comparison = parse_cone(cluster, cone, isochrone, member_ids,
-                                                                          member_probs=member_probs,
-                                                                          comparison_ids=comparison_ids,
-                                                                          comparison_probs=comparison_probs,
-                                                                          max_r=max_r, pm_errors=pm_errors,
-                                                                          g_delta=g_delta, bp_rp_delta=bp_rp_delta,
-                                                                          source_errors=source_errors)
-                print(f'done in {np.round(time.time() - t0, 1)} sec')
+                        print('Loading comparison member data...', end=' ')
+                        if os.path.exists(comparison_path):
+                            comparison = load_members(comparison_path, cluster.name,
+                                                      cluster_column=comparison_cluster_column,
+                                                      id_column=comparison_id_column,
+                                                      prob_column=comparison_prob_column)
+                            if len(comparison) > 0:
+                                comparison_ids = comparison['source_id']
+                                comparison_probs = comparison['PMemb']
+                                print('done')
+                            else:
+                                comparison_ids, comparison_probs = None, None
+                                print(f'No comparison members for cluster {cluster.name} were loaded, no '
+                                      f'members available for cluster {cluster.name} '
+                                      f'at {os.path.abspath(comparison_path)}')
+                        else:
+                            comparison_ids, comparison_probs = None, None
+                            print(f'No comparison members for cluster {cluster.name} were loaded, path to '
+                                  f'comparison members {os.path.abspath(comparison_path)} does not exist.')
 
-                print(' ')
-                print('Members:', len(members))
-                print('Candidates:', len(candidates))
-                print('Non-members:', len(non_members))
-                print(' ')
+                        isochrone = make_isochrone(isochrone_path, cluster)
 
-                print('Plotting candidates...', end=' ')
-                sources = Sources(members, candidates, non_members, comparison_members=comparison)
-                plot_sources(sources, cluster, save_dir, isochrone=isochrone, plot_type='candidates',
-                             show_boundaries=show_boundaries, show_features=show_features, show=show, save=save_plot)
-                print('done')
+                        print('Parsing cone... ', end=' ')
+                        t0 = time.time()
+                        members, candidates, non_members, comparison = parse_cone(cluster, cone, isochrone, member_ids,
+                                                                                  member_probs=member_probs,
+                                                                                  comparison_ids=comparison_ids,
+                                                                                  comparison_probs=comparison_probs,
+                                                                                  max_r=max_r, pm_errors=pm_errors,
+                                                                                  g_delta=g_delta,
+                                                                                  bp_rp_delta=bp_rp_delta,
+                                                                                  source_errors=source_errors)
+                        print(f'done in {np.round(time.time() - t0, 1)} sec')
 
-                if save_set:
-                    print('Saving sets...', end=' ')
-                    save_sets(data_dir, cluster, members, candidates, non_members, comparison)
-                    print(f'done, saved in {os.path.abspath(save_dir)}')
+                        print(' ')
+                        print('Members:', len(members))
+                        print('Candidates:', len(candidates))
+                        print('Non-members:', len(non_members))
+                        print(' ')
+
+                        print('Plotting candidates...', end=' ')
+                        sources = Sources(members, candidates, non_members, comparison_members=comparison)
+                        plot_sources(sources, cluster, save_dir, isochrone=isochrone, plot_type='candidates',
+                                     show_boundaries=show_boundaries, show_features=show_features, show=show,
+                                     save=save_plot)
+                        print('done')
+
+                        if save_set:
+                            print('Saving sets...', end=' ')
+                            save_sets(data_dir, cluster, members, candidates, non_members, comparison)
+                            print(f'done, saved in {os.path.abspath(save_dir)}')
+
+                    else:
+                        print(f'There are only {len(hp_members)} members available available with a probability '
+                              f'of {np.round(100 * prob_threshold,1)}% or higher for cluster {cluster.name}, '
+                              f'which is less than the minimum number of members ({n_min_members}), '
+                              f'skipping cluster {cluster.name}')
+                else:
+                    raise ValueError(f'The path from which to load the members '
+                                     f'{os.path.abspath(members_path)} does not exist!')
             else:
-                print(f'No members available! Skipping cluster {cluster.name}')
+                print(f'No cluster parameters available for cluster {cluster_name} at '
+                      f'{os.path.abspath(cluster_path)}, skipping cluster {cluster_name}')
         else:
-            print(f'No parameters available! Skipping cluster {cluster_name}')
+            raise ValueError(f'The path from which to load the cluster parameters '
+                             f'{os.path.abspath(cluster_path)} does not exist!')

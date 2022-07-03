@@ -7,11 +7,10 @@ from astroquery.vizier import Vizier
 from astroquery.utils import commons
 
 
-def query_catalog(catalog, columns, save_path, row_limit=-1, cluster_column=None, id_column=None,
-                  prob_column=None):
+def query_catalog(catalog, columns, save_path, row_limit=-1, cluster_column=None, id_column=None, prob_column=None):
     query = Vizier(catalog=catalog, columns=columns, row_limit=row_limit).query_constraints()[0]
     data = query.to_pandas()
-    data = data.rename(columns={cluster_column: 'cluster', id_column: 'source_id', prob_column: 'PMemb'})
+    data = data.rename(columns={cluster_column: 'cluster', id_column: 'source_id', prob_column: 'PMemb'}, inplace=True)
     data.to_csv(save_path)
 
 

@@ -7,8 +7,9 @@ import matplotlib.cm as cm
 from matplotlib.patches import Ellipse
 from matplotlib_venn import venn2
 
-from gaia_oc_amd.candidate_evaluation.diagnostics import make_density_profile, make_mass_segregation_profile, fit_king_model
-from gaia_oc_amd.data_preparation.features import isochrone_delta
+from gaia_oc_amd.candidate_evaluation.diagnostics import make_density_profile, make_mass_segregation_profile, \
+    fit_king_model
+from gaia_oc_amd.data_preparation.features import isochrone_features_function
 from gaia_oc_amd.data_preparation.utils import norm
 
 
@@ -344,8 +345,8 @@ def plot_sources(sources, cluster, save_dir, isochrone=None, plot_type='candidat
 
                     xx, yy = np.meshgrid(xs, ys)
                     grid_stars = pd.DataFrame.from_dict({'bp_rp': xx.flatten(), 'phot_g_mean_mag': yy.flatten()})
-                    zz = norm(np.stack(grid_stars.apply(isochrone_delta(cluster, isochrone), axis=1).to_numpy()),
-                              axis=1).reshape(221, 51)
+                    zz = norm(np.stack(grid_stars.apply(isochrone_features_function(cluster, isochrone),
+                                                        axis=1).to_numpy()), axis=1).reshape(221, 51)
                     c = ax.contour(xx, yy, zz, levels=[1.0], colors='red', linestyles='dashed', linewidths=1.5)
                     c.collections[0].set_label('zero-error boundary')
             ax.invert_yaxis()

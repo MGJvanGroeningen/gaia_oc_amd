@@ -34,6 +34,8 @@ if __name__ == "__main__":
                         help='Features on which the model will be trained.')
     parser.add_argument('--hidden_size', nargs='?', type=int, default=64,
                         help='Hidden size of the neural network layers.')
+    parser.add_argument('--load_model', nargs='?', type=bool, default=False,
+                        help='Whether to load the parameters of an already trained model, saved at "save_path".')
     parser.add_argument('--n_epochs', nargs='?', type=int, default=40,
                         help='The number of training epochs.')
     parser.add_argument('--lr', nargs='?', type=float, default=1e-5,
@@ -47,8 +49,6 @@ if __name__ == "__main__":
                         help='Number of epochs after which the training is terminated if the model has not improved.')
     parser.add_argument('--seed', nargs='?', type=int, default=42,
                         help='The seed that determines the distribution of train and validation data.')
-    parser.add_argument('--load_model', nargs='?', type=bool, default=False,
-                        help='Whether to load the parameters of an already trained model, saved at "save_path".')
     parser.add_argument('--show', nargs='?', type=bool, default=False,
                         help='Whether to show the loss and accuracy plot.')
     parser.add_argument('--save_plot', nargs='?', type=bool, default=True,
@@ -58,10 +58,14 @@ if __name__ == "__main__":
 
     args_dict = vars(parser.parse_args())
 
+    # main arguments
     data_dir = args_dict['data_dir']
     cluster_names = cluster_list(args_dict['cluster_names'], data_dir)
+
+    # path arguments
     model_parameters_save_file = args_dict['model_parameters_save_file']
 
+    # data arguments
     validation_fraction = args_dict['validation_fraction']
     size_support_set = args_dict['size_support_set']
     batch_size = args_dict['batch_size']
@@ -69,30 +73,41 @@ if __name__ == "__main__":
     max_non_members = args_dict['max_non_members']
     training_features = args_dict['training_features']
 
+    # model arguments
     hidden_size = args_dict['hidden_size']
+    load_model = args_dict['load_model']
 
+    # training arguments
     n_epochs = args_dict['n_epochs']
     lr = args_dict['lr']
     l2 = args_dict['l2']
     weight_imbalance = args_dict['weight_imbalance']
     early_stopping_threshold = args_dict['early_stopping_threshold']
-    load_model = args_dict['load_model']
     seed = args_dict['seed']
 
+    # plot arguments
     show = args_dict['show']
+
+    # save arguments
     save_plot = args_dict['save_plot']
     plot_save_dir = args_dict['plot_save_dir']
 
+    # Create the model
     model = D5(hidden_size, x_dim=2 * len(training_features), pool='mean', out_dim=2)
+
+    # Create training and validation datasets
     train_dataset, val_dataset = deep_sets_datasets(data_dir, cluster_names, training_features, validation_fraction,
                                                     max_members=max_members, max_non_members=max_non_members,
                                                     size_support_set=size_support_set, seed=seed)
+
+    # Train the model
     print(' ')
     metrics = train_model(model, train_dataset, val_dataset, save_path=model_parameters_save_file, num_epochs=n_epochs,
                           lr=lr, l2=l2, weight_imbalance=weight_imbalance,
                           early_stopping_threshold=early_stopping_threshold, load_model=load_model)
     print(f'Saved model parameters at {os.path.abspath(model_parameters_save_file)}')
+
+    # Show training progress
     plot_loss_accuracy(metrics, plot_save_dir, show, save_plot)
     if save_plot:
         print(f'Created loss and accuracy plot at {os.path.abspath(os.path.join(plot_save_dir, "loss_accuracy.png"))}')
-

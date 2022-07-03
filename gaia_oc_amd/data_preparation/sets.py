@@ -1,6 +1,6 @@
 import pandas as pd
 
-from gaia_oc_amd.data_preparation.candidate_selection import candidate_filter
+from gaia_oc_amd.data_preparation.candidate_selection import candidate_conditions
 
 
 class Subset(pd.DataFrame):
@@ -48,18 +48,18 @@ class Sources:
 
 
 def candidate_and_non_members_set(cone, cluster, isochrone):
-    can_filter = candidate_filter(cluster, isochrone)
-    candidate_indices = cone.apply(can_filter, axis=1)
+    conditions = candidate_conditions(cluster, isochrone)
+    candidate_indices = cone.apply(conditions, axis=1)
 
     candidates = cone[candidate_indices].copy()
     non_members = cone[~candidate_indices].copy()
     return candidates, non_members
 
 
-def member_set(cone, ids, probs=None):
-    sources = cone[cone['source_id'].isin(ids)].copy()
-    if probs is not None:
-        ids_and_probs = pd.DataFrame({'source_id': ids, 'PMemb': probs})
-        sources = pd.merge(ids_and_probs, sources, on='source_id', how='inner', suffixes=('', '_y'), copy=False)
-        sources = sources.drop(['PMemb_y'], axis=1)
-    return sources
+def member_set(cone, member_ids, member_probs=None):
+    members = cone[cone['source_id'].isin(member_ids)].copy()
+    if member_probs is not None:
+        member_ids_and_probs = pd.DataFrame({'source_id': member_ids, 'PMemb': member_probs})
+        members = pd.merge(member_ids_and_probs, members, on='source_id', how='inner', suffixes=('', '_y'), copy=False)
+        members = members.drop(['PMemb_y'], axis=1)
+    return members

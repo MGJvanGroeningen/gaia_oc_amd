@@ -1,8 +1,8 @@
 import pandas as pd
 
 from gaia_oc_amd.data_preparation.sets import member_set, candidate_and_non_members_set
-from gaia_oc_amd.data_preparation.features import phot_g_mean_mag_error, bp_rp_error, radius, pm_distance, \
-    plx_distance, isochrone_delta, add_features
+from gaia_oc_amd.data_preparation.features import phot_g_mean_mag_error_function, bp_rp_error_function, \
+    radius_feature_function, pm_feature_function, plx_feature_function, isochrone_features_function, add_features
 
 
 def parse_cone(cluster, cone, isochrone, member_ids, member_probs=None, comparison_ids=None, comparison_probs=None,
@@ -22,8 +22,9 @@ def parse_cone(cluster, cone, isochrone, member_ids, member_probs=None, comparis
     cluster.update_parameters(members)
     cluster.set_feature_parameters(members, max_r, pm_errors, g_delta, bp_rp_delta, source_errors)
 
-    feature_functions = [phot_g_mean_mag_error(), bp_rp_error(), radius(cluster), pm_distance(cluster),
-                         plx_distance(cluster), isochrone_delta(cluster, isochrone)]
+    feature_functions = [phot_g_mean_mag_error_function(), bp_rp_error_function(), radius_feature_function(cluster),
+                         pm_feature_function(cluster), plx_feature_function(cluster),
+                         isochrone_features_function(cluster, isochrone)]
     feature_labels = ['phot_g_mean_mag_error', 'bp_rp_error', 'f_r', 'f_pm', 'f_plx', ['f_c', 'f_g']]
     add_features(sources, feature_functions, feature_labels)
 
