@@ -17,7 +17,7 @@ As the filename suggest, `download_members_and_cluster_params.py` also downloads
 
 ### Gaia archive credentials
 
-We download the stellar data from the Gaia archive https://gea.esac.esa.int/archive/, which requires an account for large queries. The code that is used to handle the queries expects a credentials file (with filename 'gaia_credentials' by default), which contains 2 lines for username and password, in the supplied data directory to login to the Gaia archive. This file can be created by running
+We download this stellar data from the Gaia archive https://gea.esac.esa.int/archive/, which requires an account for large queries. The code that is used to handle the queries expects a credentials file (with filename 'gaia_credentials' by default), which contains 2 lines for username and password, in the supplied data directory to login to the Gaia archive. This file can be created by running
 
 `python create_gaia_credentials_file.py [username] [password]`.
 
@@ -25,7 +25,7 @@ We download the stellar data from the Gaia archive https://gea.esac.esa.int/arch
 
 The method also employs the theoretical isochrone of the cluster, which defines the colour and magnitude of stars with the same age and initial chemical composition for different initial masses. Isochrone data can be downloaded from http://stev.oapd.inaf.it/cgi-bin/cmd. For the photometric system, use the option 'Gaia EDR3 (all Vegamags, Gaia passbands from ESA/Gaia website)'. By default, the code expects a 'isochrones.dat' file, containing the data for isochrones with various ages, in the data directory. 
 
-Instead of manually downloading the isochrones, you can use
+Instead of manually downloading the isochrones, use
 
 `python download_isochrones.py`
 
