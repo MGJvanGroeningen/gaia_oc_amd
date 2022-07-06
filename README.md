@@ -13,7 +13,7 @@ which will download membership lists for 1229 open clusters obtained by [Cantat-
 
 ### Cluster parameters
 
-As the filename suggest, `download_members_and_cluster_params.py` also downloads a list of parameters for 2017 known clusters. We use the parameters to calibrate cone searches on clusters, which obtain data for stars in the vicinity of the cluster. These stars are selected such that they contain both candidate members, on which the trained model is applied to verify their membership status, and non-members, which serve as negative examples during training.
+As the filename suggest, `download_members_and_cluster_params.py` also downloads a list of parameters for 2017 known clusters, obtained by [Cantat-Gaudin et al. (2020)](https://ui.adsabs.harvard.edu/abs/2020A%26A...640A...1C/abstract). We use the parameters to calibrate cone searches on clusters, which obtain data for stars in the vicinity of the cluster. These stars are selected such that they contain both candidate members, on which the trained model is applied to verify their membership status, and non-members, which serve as negative examples during training.
 
 ### Gaia archive credentials
 
