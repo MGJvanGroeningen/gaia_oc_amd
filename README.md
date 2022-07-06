@@ -11,15 +11,19 @@ As the method requires knowledge of already established open cluster members, we
 
 which will download membership lists for 1229 open clusters obtained by [Cantat-Gaudin et al. (2018)](https://ui.adsabs.harvard.edu/abs/2018A%26A...618A..93C/abstract) (CG18) and membership lists for 389 open clusters obtained by [Tarricq et al. (2022)](https://ui.adsabs.harvard.edu/abs/2022A%26A...659A..59T/abstract) (T22). Throughout the project, the CG18 members have been used for training the model and the T22 members were used to compare the obtainted additional members against. In general, the code requires (i) the source identity, (ii) the cluster to which they belong and (iii) the membership probability for the members.
 
-### Cluster parameters and cone searches
+### Cluster parameters
 
-As the filename suggest, `download_members_and_cluster_params.py` also downloads a list of parameters for 2017 known clusters. We use the parameters to calibrate cone searches on clusters, which obtain data for stars in the vicinity of the cluster. These stars are selected such that they contain both candidate members, on which the trained model is applied to verify their membership status, and non-members, which serve as negative examples during training. We download this data from the Gaia archive https://gea.esac.esa.int/archive/, which requires an account for large queries. The code that is used to handle the queries expects a credentials file (with filename 'gaia_credentials' by default), which contains 2 lines for username and password, in the supplied data directory to login to the Gaia archive. This file can be created by running
+As the filename suggest, `download_members_and_cluster_params.py` also downloads a list of parameters for 2017 known clusters. We use the parameters to calibrate cone searches on clusters, which obtain data for stars in the vicinity of the cluster. These stars are selected such that they contain both candidate members, on which the trained model is applied to verify their membership status, and non-members, which serve as negative examples during training.
+
+### Gaia archive credentials
+
+We download the stellar data from the Gaia archive https://gea.esac.esa.int/archive/, which requires an account for large queries. The code that is used to handle the queries expects a credentials file (with filename 'gaia_credentials' by default), which contains 2 lines for username and password, in the supplied data directory to login to the Gaia archive. This file can be created by running
 
 `python create_gaia_credentials_file.py [username] [password]`.
 
 ### Isochrones
 
-The method also employs the theoretical isochrone of the cluster, which defines the colour and magnitude of stars with the same age and initial chemical composition for different initial masses. Isochrone data can be downloaded from http://stev.oapd.inaf.it/cgi-bin/cmd. For the photometric system, use the option 'Gaia EDR3 (all Vegamags, Gaia passbands from ESA/Gaia website)'. By default, the code expects a 'isochrones.dat' file in the supplied data directory containing the data for isochrones with various ages. When the isochrone is needed, the code extracts the isochrone from this file with the age that is closest to the cluster age in the parameters file. 
+The method also employs the theoretical isochrone of the cluster, which defines the colour and magnitude of stars with the same age and initial chemical composition for different initial masses. Isochrone data can be downloaded from http://stev.oapd.inaf.it/cgi-bin/cmd. For the photometric system, use the option 'Gaia EDR3 (all Vegamags, Gaia passbands from ESA/Gaia website)'. By default, the code expects a 'isochrones.dat' file, containing the data for isochrones with various ages, in the data directory. 
 
 Instead of manually downloading the isochrones, you can use
 
