@@ -13,11 +13,19 @@ which will download membership lists for 1229 open clusters obtained by [Cantat-
 
 ### Cluster parameters and cone searches
 
-As the filename suggest, `download_members_and_cluster_params.py` also downloads a list of parameters for 2017 known clusters. We use the parameters to calibrate cone searches on clusters, which obtain data for stars in the vicinity of the cluster. These stars are selected such that they contain both candidate members, on which the trained model is applied to verify their membership status, and non-members, which serve as negative examples during training. We download this data from the Gaia archive https://gea.esac.esa.int/archive/, which requires an account for large queries. The code that is used to handle the queries expects a credentials file (expects filename 'gaia_credentials' by default), which contains 2 lines for username and password, in the supplied data directory to login to the Gaia archive.  
+As the filename suggest, `download_members_and_cluster_params.py` also downloads a list of parameters for 2017 known clusters. We use the parameters to calibrate cone searches on clusters, which obtain data for stars in the vicinity of the cluster. These stars are selected such that they contain both candidate members, on which the trained model is applied to verify their membership status, and non-members, which serve as negative examples during training. We download this data from the Gaia archive https://gea.esac.esa.int/archive/, which requires an account for large queries. The code that is used to handle the queries expects a credentials file (with filename 'gaia_credentials' by default), which contains 2 lines for username and password, in the supplied data directory to login to the Gaia archive. This file can be created by running
+
+`python create_gaia_credentials_file.py [username] [password]`.
 
 ### Isochrones
 
-The method also employs the theoretical isochrone of the cluster, which defines the colour and magnitude of stars with the same age and initial chemical composition for different initial masses. Isochrone data can be downloaded from http://stev.oapd.inaf.it/cgi-bin/cmd. For the photometric system, use the option 'Gaia EDR3 (all Vegamags, Gaia passbands from ESA/Gaia website)'. By default, the code expects a 'isochrones.dat' file in the supplied data directory containing the data for isochrones with various ages. When the isochrone is needed, the code extracts the isochrone from this file with the age that is closest to the cluster age in the parameters file. Recommended: at the bottom of the submission form, select log(age) between 6.00 and 9.99 and use steps of 0.01 (400 isochrones per file is the maximum).
+The method also employs the theoretical isochrone of the cluster, which defines the colour and magnitude of stars with the same age and initial chemical composition for different initial masses. Isochrone data can be downloaded from http://stev.oapd.inaf.it/cgi-bin/cmd. For the photometric system, use the option 'Gaia EDR3 (all Vegamags, Gaia passbands from ESA/Gaia website)'. By default, the code expects a 'isochrones.dat' file in the supplied data directory containing the data for isochrones with various ages. When the isochrone is needed, the code extracts the isochrone from this file with the age that is closest to the cluster age in the parameters file. 
+
+Instead of manually downloading the isochrones, you can use
+
+`python download_isochrones.py`
+
+to download data for 400 (the maximum for a single query) isochrones between a log age of 6 and 9.99 and a default metal fraction Z = 0.0152.
 
 ## Creating member, candidate and non-member sets
 
