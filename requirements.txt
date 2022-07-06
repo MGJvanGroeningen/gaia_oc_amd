@@ -1,5 +1,6 @@
 pandas
 matplotlib
+matplotlib_venn
 numpy
 scikit_learn
 torch
