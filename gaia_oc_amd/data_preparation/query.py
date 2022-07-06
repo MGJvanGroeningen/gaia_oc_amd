@@ -63,10 +63,12 @@ def query_isochrone(data_dir, min_log_age=6.00, max_log_age=9.99, dlog_age=0.01,
                                   'dust_sourceC'],
                    'submit_form': 'Submit'}
 
+    print('Querying isochrones...', end=' ')
     r = requests.post(website, data={**form_kwargs})
     p = etree.HTML(r.content)
     output_url = urljoin(website, p.xpath("//a[contains(text(), 'output')]/@href")[0])
     r.close()
+    print('done')
 
     r = requests.get(output_url)
     block_size = 2 ** 16
@@ -82,7 +84,7 @@ def query_isochrone(data_dir, min_log_age=6.00, max_log_age=9.99, dlog_age=0.01,
 def query_catalog(catalog, columns, save_path, row_limit=-1, cluster_column=None, id_column=None, prob_column=None):
     query = Vizier(catalog=catalog, columns=columns, row_limit=row_limit).query_constraints()[0]
     data = query.to_pandas()
-    data = data.rename(columns={cluster_column: 'cluster', id_column: 'source_id', prob_column: 'PMemb'}, inplace=True)
+    data = data.rename(columns={cluster_column: 'cluster', id_column: 'source_id', prob_column: 'PMemb'})
     data.to_csv(save_path)
 
 
