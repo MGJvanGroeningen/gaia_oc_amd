@@ -1,6 +1,16 @@
 # Open Cluster Automatic Membership Determination with Gaia data
 This repository is part of a Master's research project (2021-2022) in which an automatic procedure for determining members of open clusters was developed. We use a neural network architecture to find additional members of an open cluster based on already established probable members. To train our model, we use astrometric and photometric data of stars obtained with the Gaia space telescope. The repository contains code for downloading and preparing datasets, for training the model and for the visualization of some results. 
 
+## Python environment setup
+
+If conda is installed, an environment for running the code can be created by running 
+
+`conda create -n gaia_oc_amd python=3.8`
+
+`conda activate gaia_oc_amd`
+
+`pip install -r requirements.txt`
+
 ## Data preparation
 
 ### Member catalogues
