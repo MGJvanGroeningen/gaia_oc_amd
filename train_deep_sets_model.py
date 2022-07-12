@@ -1,12 +1,15 @@
 import os
 import argparse
+from torch.utils.data import DataLoader
 
-from gaia_oc_amd.data_preparation.datasets import deep_sets_datasets
+from gaia_oc_amd.data_preparation.datasets import multi_cluster_deep_sets_datasets, global_feature_mean_and_std, \
+    DeepSetsDataset
+from gaia_oc_amd.data_preparation.io import save_hyper_parameters, cluster_list
+
 from gaia_oc_amd.neural_networks.training import train_model
 from gaia_oc_amd.neural_networks.deepsets_zaheer import D5
-from gaia_oc_amd.candidate_evaluation.visualization import plot_loss_accuracy
 
-from gaia_oc_amd.data_preparation.utils import cluster_list
+from gaia_oc_amd.candidate_evaluation.visualization import plot_loss_accuracy
 
 
 if __name__ == "__main__":
@@ -18,7 +21,7 @@ if __name__ == "__main__":
     parser.add_argument('--data_dir', nargs='?', type=str, default='data',
                         help='Directory where data (e.g. cone searches, source sets) '
                              'and results will be saved and retrieved.')
-    parser.add_argument('--model_parameters_save_file', nargs='?', type=str, default='deep_sets_model_parameters',
+    parser.add_argument('--model_save_dir', nargs='?', type=str, default='deep_sets_model',
                         help='Path to where the model will be saved.')
     parser.add_argument('--validation_fraction', nargs='?', type=float, default=0.3,
                         help='Fraction of the data to use for validation.')
@@ -63,7 +66,7 @@ if __name__ == "__main__":
     cluster_names = cluster_list(args_dict['cluster_names'], data_dir)
 
     # path arguments
-    model_parameters_save_file = args_dict['model_parameters_save_file']
+    model_save_dir = args_dict['model_save_dir']
 
     # data arguments
     validation_fraction = args_dict['validation_fraction']
@@ -92,20 +95,52 @@ if __name__ == "__main__":
     save_plot = args_dict['save_plot']
     plot_save_dir = args_dict['plot_save_dir']
 
+    if not os.path.exists(model_save_dir):
+        os.mkdir(model_save_dir)
+
     # Create the model
     model = D5(hidden_size, x_dim=2 * len(training_features), pool='mean', out_dim=2)
 
+    # Store feature means and standard deviations for future normalization during candidate evaluation
+    training_feature_means, training_feature_stds = global_feature_mean_and_std(data_dir, cluster_names,
+                                                                                training_features)
+
+    hyperparameters = {'cluster_names': cluster_names,
+                       'training_feature_means': list(training_feature_means),
+                       'training_feature_stds': list(training_feature_stds),
+                       'validation_fraction': validation_fraction,
+                       'size_support_set': size_support_set,
+                       'batch_size': batch_size,
+                       'max_members': max_members,
+                       'max_non_members': max_non_members,
+                       'training_features': training_features,
+                       'hidden_size': hidden_size,
+                       'n_epochs': n_epochs,
+                       'lr': lr,
+                       'l2': l2,
+                       'weight_imbalance': weight_imbalance,
+                       'seed': seed}
+
+    save_hyper_parameters(model_save_dir, hyperparameters)
+
     # Create training and validation datasets
-    train_dataset, val_dataset = deep_sets_datasets(data_dir, cluster_names, training_features, validation_fraction,
-                                                    max_members=max_members, max_non_members=max_non_members,
-                                                    size_support_set=size_support_set, seed=seed)
+    train_dataset, val_dataset = multi_cluster_deep_sets_datasets(data_dir, cluster_names, training_features,
+                                                                  training_feature_means, training_feature_stds,
+                                                                  validation_fraction=validation_fraction,
+                                                                  max_members=max_members,
+                                                                  max_non_members=max_non_members,
+                                                                  size_support_set=size_support_set, seed=seed)
+
+    train_dataset = DataLoader(DeepSetsDataset(train_dataset), batch_size=batch_size, shuffle=True)
+    val_dataset = DataLoader(DeepSetsDataset(val_dataset), batch_size=batch_size, shuffle=True)
 
     # Train the model
     print(' ')
-    metrics = train_model(model, train_dataset, val_dataset, save_path=model_parameters_save_file, num_epochs=n_epochs,
-                          lr=lr, l2=l2, weight_imbalance=weight_imbalance,
+    model_parameters_save_path = os.path.join(model_save_dir, 'model_parameters')
+    metrics = train_model(model, train_dataset, val_dataset, model_parameters_save_path=model_parameters_save_path,
+                          num_epochs=n_epochs, lr=lr, l2=l2, weight_imbalance=weight_imbalance,
                           early_stopping_threshold=early_stopping_threshold, load_model=load_model)
-    print(f'Saved model parameters at {os.path.abspath(model_parameters_save_file)}')
+    print(f'Saved model parameters at {os.path.abspath(model_parameters_save_path)}')
 
     # Show training progress
     plot_loss_accuracy(metrics, plot_save_dir, show, save_plot)

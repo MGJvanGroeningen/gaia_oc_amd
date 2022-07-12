@@ -1,15 +1,18 @@
 import os
 import argparse
+import numpy as np
 from torch import load
 
-from gaia_oc_amd.data_preparation.isochrone import make_isochrone
-from gaia_oc_amd.data_preparation.features import Features
-from gaia_oc_amd.candidate_evaluation.probabilities import calculate_probabilities
-from gaia_oc_amd.candidate_evaluation.diagnostics import save_tidal_radius
 from gaia_oc_amd.data_preparation.sets import Sources
+from gaia_oc_amd.data_preparation.io import load_cluster, load_sets, cluster_list, find_path, load_hyper_parameters, \
+    load_isochrone, save_cluster
+
 from gaia_oc_amd.neural_networks.deepsets_zaheer import D5
+
+from gaia_oc_amd.candidate_evaluation.probabilities import calculate_probabilities
+from gaia_oc_amd.candidate_evaluation.diagnostics import tidal_radius
 from gaia_oc_amd.candidate_evaluation.visualization import make_plots
-from gaia_oc_amd.data_preparation.utils import load_sets, cluster_list, find_path
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -23,14 +26,8 @@ if __name__ == "__main__":
     parser.add_argument('--isochrone_path', nargs='?', type=str, default='isochrones.dat',
                         help='Path for retrieving isochrone data. Expects a .dat file with isochrone data '
                              'between log(age) of 6 and 10.')
-    parser.add_argument('--model_parameters_save_file', nargs='?', type=str, default='deep_sets_model_parameters',
+    parser.add_argument('--model_save_dir', nargs='?', type=str, default='deep_sets_model',
                         help='Path to where the model parameters will be saved.')
-    parser.add_argument('--hidden_size', nargs='?', type=int, default=64,
-                        help='Hidden size of the neural network layers.')
-    parser.add_argument('--size_support_set', nargs='?', type=int, default=5,
-                        help='The number of members in the support set of the candidate samples.')
-    parser.add_argument('--training_features', nargs='*', type=str, default=['f_r', 'f_pm', 'f_plx', 'f_c', 'f_g'],
-                        help='Features on which the model was be trained.')
     parser.add_argument('--n_samples', nargs='?', type=int, default=40,
                         help='Number of candidate samples to use for calculating the membership probability.')
     parser.add_argument('--seed', nargs='?', type=int, default=42,
@@ -48,8 +45,9 @@ if __name__ == "__main__":
     parser.add_argument('--use_tidal_radius', nargs='?', type=bool, default=False,
                         help='Whether to calculate the tidal radius of the cluster '
                              'and exclude candidate members outside the tidal radius from the plot.')
-    parser.add_argument('--show_train_members', nargs='?', type=bool, default=False,
-                        help='Whether to show the training members on top of/instead of the comparison members.')
+    parser.add_argument('--compare_train_members', nargs='?', type=bool, default=False,
+                        help='Whether to compare against the training members on top of/instead of '
+                             'the comparison members.')
 
     args_dict = vars(parser.parse_args())
 
@@ -59,14 +57,7 @@ if __name__ == "__main__":
 
     # path arguments
     isochrone_path = find_path(args_dict['isochrone_path'], data_dir)
-    model_parameters_save_file = find_path(args_dict['model_parameters_save_file'], data_dir)
-
-    # model arguments
-    hidden_size = args_dict['hidden_size']
-
-    # data arguments
-    size_support_set = args_dict['size_support_set']
-    training_features = args_dict['training_features']
+    model_save_dir = find_path(args_dict['model_save_dir'], data_dir)
 
     # evaluation arguments
     n_samples = args_dict['n_samples']
@@ -78,14 +69,21 @@ if __name__ == "__main__":
     members_label = args_dict['members_label']
     comparison_label = args_dict['comparison_label']
     use_tidal_radius = args_dict['use_tidal_radius']
-    show_train_members = args_dict['show_train_members']
+    compare_train_members = args_dict['compare_train_members']
 
     # save arguments
     save_plots = args_dict['save_plots']
 
+    hyper_parameters = load_hyper_parameters(model_save_dir)
+    training_features = hyper_parameters['training_features']
+    hidden_size = hyper_parameters['hidden_size']
+    training_feature_means = np.array(hyper_parameters['training_feature_means'])
+    training_feature_stds = np.array(hyper_parameters['training_feature_stds'])
+    size_support_set = hyper_parameters['size_support_set']
+
     # Load the trained deep sets model
     model = D5(hidden_size, x_dim=2 * len(training_features), pool='mean', out_dim=2)
-    model.load_state_dict(load(model_parameters_save_file))
+    model.load_state_dict(load(os.path.join(model_save_dir, 'model_parameters')))
 
     print('Evaluating candidates for:', cluster_names)
     print('Number of clusters:', len(cluster_names))
@@ -94,31 +92,35 @@ if __name__ == "__main__":
         print(' ')
         print('Cluster:', cluster_name)
 
+        # Define the cluster data/results directory
+        cluster_dir = os.path.join(data_dir, 'clusters', cluster_name)
+
         # Load the necessary datasets (i.e. cluster, sources and isochrone)
-        cluster, members, candidates, non_members, comparison = load_sets(data_dir, cluster_name)
-        isochrone = make_isochrone(isochrone_path, cluster)
+        members, candidates, non_members, comparison = load_sets(cluster_dir)
+        cluster = load_cluster(cluster_dir)
+        isochrone = load_isochrone(isochrone_path, cluster)
 
-        save_dir = os.path.join(data_dir, 'clusters', cluster.name)
+        candidate_probabilities = calculate_probabilities(candidates, model, cluster, isochrone, members,
+                                                          training_features, training_feature_means,
+                                                          training_feature_stds, size_support_set=size_support_set,
+                                                          n_samples=n_samples, seed=seed)
 
-        # The features object is used to calculate the training features of candidate samples
-        features = Features(training_features, cluster, isochrone)
-        sources = Sources(members, candidates, non_members, comparison_members=comparison,
-                          members_label=members_label, comparison_label=comparison_label)
-
-        # Calculate candidate membership probabilities
-        sources.candidates['PMemb'] = calculate_probabilities(candidates, model, sources, features, n_samples,
-                                                              size_support_set=size_support_set, seed=seed)
-        sources.candidates.to_csv(os.path.join(save_dir, 'candidates.csv'))
+        candidates['PMemb'] = candidate_probabilities
+        candidates.to_csv(os.path.join(cluster_dir, 'candidates.csv'))
 
         # If we do not train on the sky position feature (f_r), we can use the tidal radius to constrain the new members
         if use_tidal_radius:
-            save_tidal_radius(data_dir, sources.candidates.hp(min_prob=0.1), cluster)
-            tidal_radius = cluster.r_t
+            r_t = tidal_radius(candidates[candidates['PMemb'] >= 0.1], cluster)
+            cluster.r_t = r_t
+            save_cluster(data_dir, cluster)
         else:
-            tidal_radius = None
+            r_t = None
+
+        sources = Sources(members, candidates, non_members, comparison=comparison, members_label=members_label,
+                          comparison_label=comparison_label)
 
         print('Creating plots...', end=' ')
         if show or save_plots:
-            make_plots(sources, cluster, save_dir, isochrone, prob_threshold=prob_threshold, show=show, save=save_plots,
-                       tidal_radius=tidal_radius, show_train_members=show_train_members)
-        print(f'done, saved in {os.path.abspath(save_dir)}')
+            make_plots(sources, cluster, cluster_dir, isochrone, prob_threshold=prob_threshold, tidal_radius=r_t,
+                       compare_train_members=compare_train_members, show=show, save=save_plots)
+        print(f'done, saved in {os.path.abspath(cluster_dir)}')

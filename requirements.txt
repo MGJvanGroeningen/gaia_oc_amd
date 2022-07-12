@@ -1,8 +1,7 @@
+numpy
 pandas
 matplotlib
 matplotlib_venn
-numpy
-scikit_learn
 torch
 torchvision
 scipy

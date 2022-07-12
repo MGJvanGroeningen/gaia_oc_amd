@@ -14,6 +14,16 @@ from gaia_oc_amd.data_preparation.utils import norm
 
 
 def plot_loss_accuracy(metrics, save_dir, show=True, save=True):
+    """Plots the evolution of the loss and classification accuracy during training.
+
+    Args:
+        metrics (dict): Dictionary containing the loss and (non-)member classification
+            accuracies for every epoch
+        save_dir (str): Directory where the plot is saved
+        show (bool): Whether to show the plot
+        save (bool): Whether to save the plot
+
+    """
     fig, ax = plt.subplots(1, 2, figsize=(16, 6))
 
     epochs = np.arange(len(metrics['train_loss']))
@@ -46,25 +56,50 @@ def plot_loss_accuracy(metrics, save_dir, show=True, save=True):
     plt.close(fig)
 
 
-def drop_training_members(members, new_members, comparison):
-    new_members = pd.merge(new_members, members, how='outer', on='source_id', suffixes=('', '_'),
+def drop_training_members(training_members, new_members, comparison):
+    """Returns the candidates above a certain probability threshold (new members) and comparison members,
+    with the overlapping training members removed
+
+    Args:
+        training_members (Dataframe): Dataframe containing training member sources
+        new_members (Dataframe): Dataframe containing candidate sources above a certain probability threshold
+        comparison (Dataframe): Dataframe containing comparison sources
+
+    Returns:
+        new_members (Dataframe): New members without the training members
+        comparison (Dataframe): Comparison members without the training members
+
+    """
+    new_members = pd.merge(new_members, training_members, how='outer', on='source_id', suffixes=('', '_'),
                            indicator=True).query("_merge == 'left_only'").drop('_merge',
                                                                                axis=1).reset_index(drop=True)
-    comparison = pd.merge(comparison, members, how='outer', on='source_id', suffixes=('', '_'),
+    comparison = pd.merge(comparison, training_members, how='outer', on='source_id', suffixes=('', '_'),
                           indicator=True).query("_merge == 'left_only'").drop('_merge',
                                                                               axis=1).reset_index(drop=True)
     return new_members, comparison
 
 
-def select_comparison(sources, prob_threshold=0.1, show_train_members=False, drop_train_members=False,
-                      tidal_radius=None):
+def select_comparison(sources, prob_threshold=0.1, tidal_radius=None, compare_train_members=False,
+                      drop_train_members=False):
+    """Determines which sources to use for a plot in which the candidates are compared to another set of members.
+
+    Args:
+        sources (Sources): Sources object, containing the members, candidates, non-members and comparison members
+        prob_threshold (float): The minimum probability threshold for the 'new_members' plot.
+        tidal_radius (float): The value of the tidal radius in parsec for excluding distant members.
+        compare_train_members (bool): Whether to compare against the train members in the 'candidates'
+            or 'comparison' plot
+        drop_train_members (bool): Whether to drop the train members from the candidates and comparison members.
+            Can only be used when compare_training_members is False.
+
+    """
     new_members = sources.candidates.hp(min_prob=prob_threshold, tidal_radius=tidal_radius)
 
-    if show_train_members or sources.comparison_members is None:
+    if compare_train_members or sources.comparison is None:
         comparison = sources.members
         comparison_label = sources.members_label
     else:
-        comparison = sources.comparison_members
+        comparison = sources.comparison
         comparison_label = sources.comparison_label
 
         if drop_train_members:
@@ -74,13 +109,25 @@ def select_comparison(sources, prob_threshold=0.1, show_train_members=False, dro
     return new_members, comparison, comparison_label
 
 
-def plot_density_profile(sources, cluster, save_dir, show_train_members=False, show=True, save=True):
-    new_members, comparison, comparison_label = select_comparison(sources, show_train_members=show_train_members)
+def plot_density_profile(sources, cluster, save_dir, compare_train_members=False, show=True, save=True):
+    """Plots a surface stellar density profile for the cluster sources.
+
+    Args:
+        sources (Sources): Sources object, containing the members, candidates, non-members and comparison members
+        cluster (Cluster): Cluster object
+        save_dir (str): Directory where the plot is saved
+        compare_train_members (bool): Whether to compare against the train members in the 'candidates'
+            or 'comparison' plot
+        show (bool): Whether to show the plot
+        save (bool): Whether to save the plot
+
+    """
+    new_members, comparison, comparison_label = select_comparison(sources, compare_train_members=compare_train_members)
 
     fig, ax = plt.subplots(1, 1, figsize=(10, 8))
 
     for mem, lab, col in zip([comparison, new_members], [comparison_label, 'this study'], ['gray', 'black']):
-        rs, densities, sigmas, areas = make_density_profile(mem, cluster)
+        rs, areas, densities, sigmas = make_density_profile(mem, cluster)
         r_fit, density_fit, r_t = fit_king_model(rs, densities, areas)
         ax.errorbar(rs, densities, sigmas, fmt="o", capsize=3.0, label=f'{lab}', c=col)
         ax.plot(r_fit, density_fit, label=r'King model fit, $R_{t}$' + f'={np.round(r_t, 1)} pc ' + f'({lab})', c=col)
@@ -100,16 +147,31 @@ def plot_density_profile(sources, cluster, save_dir, show_train_members=False, s
 
 
 def plot_mass_segregation_profile(sources, cluster, save_dir, min_n_mst=5, max_n_mst=100, n_samples=20,
-                                  show_train_members=False, tidal_radius=None, show=True, save=True):
-    new_members, comparison, comparison_label = select_comparison(sources, show_train_members=show_train_members,
-                                                                  tidal_radius=tidal_radius)
+                                  tidal_radius=None, compare_train_members=False, show=True, save=True):
+    """Plots a mass segregation profile for the cluster sources.
+
+    Args:
+        sources (Sources): Sources object, containing the members, candidates, non-members and comparison members
+        cluster (Cluster): Cluster object
+        save_dir (str): Directory where the plot is saved
+        min_n_mst (int): Minimum number of members for which to calculate the mass segregation ratio
+        max_n_mst (int): Maximum number of members for which to calculate the mass segregation ratio
+        n_samples (int): The number of samples of the random set of N members.
+        tidal_radius (float): The value of the tidal radius in parsec for excluding distant members.
+        compare_train_members (bool): Whether to compare against the train members in the 'candidates'
+            or 'comparison' plot
+        show (bool): Whether to show the plot
+        save (bool): Whether to save the plot
+
+    """
+    new_members, comparison, comparison_label = select_comparison(sources, tidal_radius=tidal_radius,
+                                                                  compare_train_members=compare_train_members)
 
     fig, ax = plt.subplots(1, 1, figsize=(10, 8))
     
     for mem, lab, col in zip([comparison, new_members], [comparison_label, 'this study'], ['gray', 'black']):
-        bins = np.arange(min_n_mst, min(len(mem), max_n_mst))
-        ms, sigmas = make_mass_segregation_profile(mem, cluster, bins, n_samples)
-        ax.errorbar(bins, ms, sigmas, elinewidth=0.5, ms=2.0, capsize=2.0, fmt="o", c=col, label=lab)
+        n_mst, lambda_msr, sigmas = make_mass_segregation_profile(mem, cluster, min_n_mst, max_n_mst, n_samples)
+        ax.errorbar(n_mst, lambda_msr, sigmas, elinewidth=0.5, ms=2.0, capsize=2.0, fmt="o", c=col, label=lab)
 
     ax.hlines(1, min_n_mst, max_n_mst, linestyles='dashed')
     ax.set_title(f'{cluster.name}'.replace('_', ' '), fontsize=20)
@@ -126,11 +188,26 @@ def plot_mass_segregation_profile(sources, cluster, save_dir, min_n_mst=5, max_n
 
 
 def plot_confusion_matrix(sources, cluster, save_dir, tidal_radius=None, drop_train_members=False,
-                          show_train_members=False, show=True, save=True):
+                          compare_train_members=False, show=True, save=True):
+    """Plots a 'confusion matrix' that compares the probabilities of the candidates and comparison/train members.
+
+    Args:
+        sources (Sources): Sources object, containing the members, candidates, non-members and comparison members
+        cluster (Cluster): Cluster object
+        save_dir (str): Directory where the plot is saved
+        tidal_radius (float): The value of the tidal radius in parsec for excluding distant members.
+        drop_train_members (bool): Whether to drop the train members from the candidates and comparison members.
+            Can only be used when compare_training_members is False.
+        compare_train_members (bool): Whether to compare against the train members in the 'candidates'
+            or 'comparison' plot
+        show (bool): Whether to show the plot
+        save (bool): Whether to save the plot
+
+    """
     new_members, comparison, comparison_label = select_comparison(sources, prob_threshold=0.0,
-                                                                  show_train_members=show_train_members,
-                                                                  drop_train_members=drop_train_members,
-                                                                  tidal_radius=tidal_radius)
+                                                                  tidal_radius=tidal_radius,
+                                                                  compare_train_members=compare_train_members,
+                                                                  drop_train_members=drop_train_members)
     
     fig, ax = plt.subplots(1, 1, figsize=(10, 6))
 
@@ -161,10 +238,26 @@ def plot_confusion_matrix(sources, cluster, save_dir, tidal_radius=None, drop_tr
 
 
 def plot_venn_diagram(sources, cluster, save_dir, tidal_radius=None, drop_train_members=False,
-                      show_train_members=False, show=True, save=True):
-    new_members, comparison, comparison_label = select_comparison(sources, show_train_members=show_train_members,
-                                                                  drop_train_members=drop_train_members,
-                                                                  tidal_radius=tidal_radius)
+                      compare_train_members=False, show=True, save=True):
+    """Plots a venn diagram that shows the overlap between the candidates and comparison/train members
+    above a probability threshold of 90%, 50% and 10%.
+
+    Args:
+        sources (Sources): Sources object, containing the members, candidates, non-members and comparison members
+        cluster (Cluster): Cluster object
+        save_dir (str): Directory where the plot is saved
+        tidal_radius (float): The value of the tidal radius in parsec for excluding distant members.
+        drop_train_members (bool): Whether to drop the train members from the candidates and comparison members.
+            Can only be used when compare_training_members is False.
+        compare_train_members (bool): Whether to compare against the train members in the 'candidates'
+            or 'comparison' plot
+        show (bool): Whether to show the plot
+        save (bool): Whether to save the plot
+
+    """
+    new_members, comparison, comparison_label = select_comparison(sources, tidal_radius=tidal_radius,
+                                                                  compare_train_members=compare_train_members,
+                                                                  drop_train_members=drop_train_members)
 
     fig, ax = plt.subplots(1, 3, figsize=(18, 8))
 
@@ -193,6 +286,20 @@ def plot_venn_diagram(sources, cluster, save_dir, tidal_radius=None, drop_train_
 
 
 def candidates_plot(ax, x, y, sources, cluster, tidal_radius=None, show_features=False, show_boundaries=True):
+    """Plots the training members, candidates and non-members in sky position, proper motion, parallax
+    and the colour-magnitude diagram.
+
+    Args:
+        ax (AxesSubplot): AxesSubplot object on which to make the plot
+        x (str): Label of the x-axis property
+        y (str): Label of the y-axis property
+        sources (Sources): Sources object, containing the members, candidates, non-members and comparison members
+        cluster (Cluster): Cluster object
+        tidal_radius (float): The value of the tidal radius in parsec for excluding distant members.
+        show_features (bool): Whether to show feature arrows in the 'candidates' plot
+        show_boundaries (bool): Whether to show zero-error boundaries in the 'candidates' plot
+
+    """
     members = sources.members
     candidates = sources.candidates.hp(tidal_radius=tidal_radius)
     non_members = sources.non_members
@@ -214,7 +321,7 @@ def candidates_plot(ax, x, y, sources, cluster, tidal_radius=None, show_features
             ax.annotate("", xy=(candidates[x].iloc[idx], candidates[y].iloc[idx]),
                         xytext=(candidates[x].iloc[idx], getattr(cluster, y)),
                         arrowprops=dict(arrowstyle="->", linewidth=3, color='black', mutation_scale=30))
-            ax.hlines(cluster.parallax, 6, 22,
+            ax.hlines(cluster.parallax, 0, 22,
                       colors='black', linestyles='dashed', linewidths=1.5, zorder=2, label='mean parallax')
         if x == 'bp_rp':
             ax.annotate("", xy=(candidates[x].iloc[idx], candidates[y].iloc[idx]),
@@ -235,19 +342,41 @@ def candidates_plot(ax, x, y, sources, cluster, tidal_radius=None, show_features
                           label='zero-error boundary')
         ax.add_patch(ellipse)
     elif y == 'parallax' and show_boundaries:
-        ax.hlines((cluster.parallax - cluster.plx_delta_plus, cluster.parallax + cluster.plx_delta_min), 6, 22,
+        ax.hlines((cluster.parallax - cluster.plx_delta_plus, cluster.parallax + cluster.plx_delta_min), 0, 22,
                   colors='red', linestyles='dashed', linewidths=1.5, zorder=2, label='zero-error boundary')
 
 
-def color_map(c_map, members, color_norm):
+def member_colors(c_map, members, color_norm):
+    """Determines the colors of the members based on their membership probability.
+
+    Args:
+        c_map (str): Label of a color map (e.g. 'Greens')
+        members (Dataframe): Dataframe containing member sources
+        color_norm (Normalize): A matplotlib.colors.Normalize object that defines the boundary color values
+
+    """
     mapper = cm.ScalarMappable(norm=color_norm, cmap=c_map)
     color = np.array([(mapper.to_rgba(v)) for v in members['PMemb']])
     return color
 
 
-def comparison_plot(ax, x, y, sources, tidal_radius=False, show_train_members=False):
+def comparison_plot(ax, x, y, sources, tidal_radius=None, compare_train_members=False):
+    """Plots the candidates and comparison members, if available, in sky position, proper motion, parallax
+    and the colour-magnitude diagram. Optionally also plots the training members. A color map indicates the
+    membership probability of the sources.
+
+    Args:
+        ax (AxesSubplot): AxesSubplot object on which to make the plot
+        x (str): Label of the x-axis property
+        y (str): Label of the y-axis property
+        sources (Sources): Sources object, containing the members, candidates, non-members and comparison members
+        tidal_radius (float): The value of the tidal radius in parsec for excluding distant members.
+        compare_train_members (bool): Whether to compare against the train members in the 'candidates'
+            or 'comparison' plot
+
+    """
     new_members = sources.candidates.hp(min_prob=0.1, tidal_radius=tidal_radius)
-    comparison = sources.comparison_members
+    comparison = sources.comparison
     members = sources.members
 
     x_error = f'{x}_error'
@@ -258,7 +387,7 @@ def comparison_plot(ax, x, y, sources, tidal_radius=False, show_train_members=Fa
 
     color_norm = colors.Normalize(vmin=vmin, vmax=vmax, clip=True)
 
-    if show_train_members:
+    if compare_train_members:
         ax.scatter(members[x], members[y], label=f'members ({sources.members_label})',
                    s=5.0, vmin=vmin, vmax=vmax, c=members['PMemb'], cmap='Blues', zorder=2)
     if comparison is not None:
@@ -268,22 +397,34 @@ def comparison_plot(ax, x, y, sources, tidal_radius=False, show_train_members=Fa
                s=30.0, vmin=vmin, vmax=vmax, c=new_members['PMemb'], cmap='Reds', zorder=1)
 
     if x != 'l':
-        if show_train_members:
-            color = color_map('Blues', members, color_norm)
+        if compare_train_members:
+            color = member_colors('Blues', members, color_norm)
             ax.errorbar(members[x], members[y], xerr=members[x_error],
                         markersize=0.0, yerr=members[y_error], fmt='none', ecolor=color, elinewidth=0.2,
                         zorder=0)
         if comparison is not None:
-            color = color_map('Greens', comparison, color_norm)
+            color = member_colors('Greens', comparison, color_norm)
             ax.errorbar(comparison[x], comparison[y], xerr=comparison[x_error],
                         markersize=0.0, yerr=comparison[y_error], fmt='none', ecolor=color, elinewidth=0.2,
                         zorder=0)
-        color = color_map('Reds', new_members, color_norm)
+        color = member_colors('Reds', new_members, color_norm)
         ax.errorbar(new_members[x], new_members[y], xerr=new_members[x_error],
                     markersize=0.0, yerr=new_members[y_error], fmt='none', ecolor=color, elinewidth=0.2, zorder=-1)
 
 
-def members_plot(ax, x, y, sources, plot_prob_threshold, tidal_radius=None):
+def new_members_plot(ax, x, y, sources, plot_prob_threshold, tidal_radius=None):
+    """Plots the candidates with membership probabilities above a certain threshold against a background
+    of non-members in sky position, proper motion, parallax and the colour-magnitude diagram.
+
+    Args:
+        ax (AxesSubplot): AxesSubplot object on which to make the plot
+        x (str): Label of the x-axis property
+        y (str): Label of the y-axis property
+        sources (Sources): Sources object, containing the members, candidates, non-members and comparison members
+        plot_prob_threshold (float): The minimum probability threshold for the 'new_members' plot.
+        tidal_radius (float): The value of the tidal radius in parsec for excluding distant members.
+
+    """
     if tidal_radius:
         new_members = sources.candidates.hp(min_prob=plot_prob_threshold, tidal_radius=tidal_radius)
         non_members = pd.concat((sources.non_members, sources.candidates.lp(max_prob=plot_prob_threshold,
@@ -299,8 +440,27 @@ def members_plot(ax, x, y, sources, plot_prob_threshold, tidal_radius=None):
 
 
 def plot_sources(sources, cluster, save_dir, isochrone=None, plot_type='candidates', prob_threshold=1.0,
-                 tidal_radius=None, show_features=False, show_boundaries=True, show_train_members=False,
+                 tidal_radius=None, show_features=False, show_boundaries=True, compare_train_members=False,
                  show=True, save=True):
+    """Main function for creating several plots that show the distribution of the sources in sky position,
+    proper motion, parallax and the colour-magnitude diagram.
+
+    Args:
+        sources (Sources): Sources object, containing the members, candidates, non-members and comparison members
+        cluster (Cluster): Cluster object
+        save_dir (str): Directory where the plot is saved
+        isochrone (Dataframe): Dataframe containing the colour and magnitude of the isochrone.
+        plot_type (str): The kind of plot to make ('candidates', 'comparison', 'new_members')
+        prob_threshold (float): The minimum probability threshold for the 'new_members' plot.
+        tidal_radius (float): The value of the tidal radius in parsec for excluding distant members.
+        show_features (bool): Whether to show feature arrows in the 'candidates' plot
+        show_boundaries (bool): Whether to show zero-error boundaries in the 'candidates' plot
+        compare_train_members (bool): Whether to compare against the train members in the 'candidates'
+            or 'comparison' plot
+        show (bool): Whether to show the plot
+        save (bool): Whether to save the plot
+
+    """
     x_fields = ['l', 'phot_g_mean_mag', 'pmra', 'bp_rp']
     y_fields = ['b', 'parallax', 'pmdec', 'phot_g_mean_mag']
     plot_fields = ['l', 'b', 'pmra', 'pmdec', 'parallax', 'phot_g_mean_mag', 'bp_rp']
@@ -328,9 +488,9 @@ def plot_sources(sources, cluster, save_dir, isochrone=None, plot_type='candidat
         if plot_type == 'candidates':
             candidates_plot(ax, x, y, sources, cluster, tidal_radius, show_features, show_boundaries)
         elif plot_type == 'comparison':
-            comparison_plot(ax, x, y, sources, tidal_radius, show_train_members)
+            comparison_plot(ax, x, y, sources, tidal_radius, compare_train_members)
         elif plot_type == 'new_members':
-            members_plot(ax, x, y, sources, prob_threshold, tidal_radius)
+            new_members_plot(ax, x, y, sources, prob_threshold, tidal_radius)
 
         ax.set_xlim(limits[x])
         ax.set_ylim(limits[y])
@@ -346,7 +506,7 @@ def plot_sources(sources, cluster, save_dir, isochrone=None, plot_type='candidat
                     xx, yy = np.meshgrid(xs, ys)
                     grid_stars = pd.DataFrame.from_dict({'bp_rp': xx.flatten(), 'phot_g_mean_mag': yy.flatten()})
                     zz = norm(np.stack(grid_stars.apply(isochrone_features_function(cluster, isochrone),
-                                                        axis=1).to_numpy()), axis=1).reshape(221, 51)
+                                                        axis=1).to_numpy())).reshape(221, 51)
                     c = ax.contour(xx, yy, zz, levels=[1.0], colors='red', linestyles='dashed', linewidths=1.5)
                     c.collections[0].set_label('zero-error boundary')
             ax.invert_yaxis()
@@ -364,8 +524,25 @@ def plot_sources(sources, cluster, save_dir, isochrone=None, plot_type='candidat
     plt.close(fig)
 
 
-def make_plots(sources, cluster, save_dir, isochrone, prob_threshold=1.0, show=True, save=True,
-               tidal_radius=None, show_features=False, show_boundaries=True, show_train_members=False):
+def make_plots(sources, cluster, save_dir, isochrone, prob_threshold=1.0, tidal_radius=None, show_features=False,
+               show_boundaries=True, compare_train_members=False, show=True, save=True):
+    """Creates all relevant plots of the sources of a given cluster.
+
+    Args:
+        sources (Sources): Sources object, containing the members, candidates, non-members and comparison members
+        cluster (Cluster): Cluster object
+        save_dir (str): Directory where the plots are saved
+        isochrone (Dataframe): Dataframe containing the colour and magnitude of the isochrone.
+        prob_threshold (float): The minimum probability threshold for the 'new_members' plot.
+        tidal_radius (float): The value of the tidal radius in parsec for excluding distant members.
+        show_features (bool): Whether to show feature arrows in the 'candidates' plot
+        show_boundaries (bool): Whether to show zero-error boundaries in the 'candidates' plot
+        compare_train_members (bool): Whether to compare against the train members in the 'candidates'
+            or 'comparison' plot
+        show (bool): Whether to show the plot
+        save (bool): Whether to save the plot
+
+    """
     plot_density_profile(sources, cluster, save_dir, show=show, save=save)
     plot_mass_segregation_profile(sources, cluster, save_dir, tidal_radius=tidal_radius, show=show, save=save)
     plot_confusion_matrix(sources, cluster, save_dir, tidal_radius=tidal_radius, show=show, save=save)
@@ -373,7 +550,7 @@ def make_plots(sources, cluster, save_dir, isochrone, prob_threshold=1.0, show=T
 
     plot_sources(sources, cluster, save_dir, isochrone=isochrone, plot_type='new_members',
                  prob_threshold=prob_threshold, tidal_radius=tidal_radius, show_features=show_features,
-                 show_boundaries=show_boundaries, show_train_members=show_train_members, show=show, save=save)
+                 show_boundaries=show_boundaries, compare_train_members=compare_train_members, show=show, save=save)
     plot_sources(sources, cluster, save_dir, isochrone=isochrone, plot_type='comparison',
                  prob_threshold=prob_threshold, tidal_radius=tidal_radius, show_features=show_features,
-                 show_boundaries=show_boundaries, show_train_members=show_train_members, show=show, save=save)
+                 show_boundaries=show_boundaries, compare_train_members=compare_train_members, show=show, save=save)

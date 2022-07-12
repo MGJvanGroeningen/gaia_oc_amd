@@ -3,13 +3,12 @@ import time
 import numpy as np
 import argparse
 
-from gaia_oc_amd.data_preparation.isochrone import make_isochrone
 from gaia_oc_amd.data_preparation.parse_cone import parse_cone
 from gaia_oc_amd.data_preparation.query import cone_search
 from gaia_oc_amd.data_preparation.sets import Sources
 from gaia_oc_amd.data_preparation.cluster import Cluster
-from gaia_oc_amd.data_preparation.utils import save_sets, load_cone, load_members, load_cluster_parameters, \
-    cluster_list, find_path
+from gaia_oc_amd.data_preparation.io import save_cluster, save_sets, load_cluster_parameters, load_cone, load_members, \
+    load_isochrone, cluster_list, find_path
 from gaia_oc_amd.candidate_evaluation.visualization import plot_sources
 
 
@@ -64,9 +63,9 @@ if __name__ == "__main__":
     parser.add_argument('--comparison_prob_column', nargs='?', type=str, default='Proba',
                         help='Column name for indicating the membership probability of comparison member sources.')
     parser.add_argument('--can_max_r', nargs='?', type=float, default=60.,
-                        help='Maximum deviation in parallax (derived from radius in parsec) from the cluster mean '
-                             'to be used in candidate selection.')
-    parser.add_argument('--can_pm_errors', nargs='?', type=float, default=5.,
+                        help='Maximum radius in parsec which determines the maximum deviation in parallax '
+                             'from the cluster mean to be used in candidate selection.')
+    parser.add_argument('--can_pm_error_weight', nargs='?', type=float, default=5.,
                         help='Maximum deviation in proper motion (in number of sigma) from the cluster mean '
                              'to be used in candidate selection.')
     parser.add_argument('--can_g_delta', nargs='?', type=float, default=1.5,
@@ -75,7 +74,7 @@ if __name__ == "__main__":
     parser.add_argument('--can_bp_rp_delta', nargs='?', type=float, default=0.5,
                         help='Maximum deviation in colour from the isochrone '
                              'to be used in candidate selection.')
-    parser.add_argument('--can_source_errors', nargs='?', type=float, default=3.,
+    parser.add_argument('--can_source_error_weight', nargs='?', type=float, default=3.,
                         help='How many sigma candidates may lie outside the maximum deviations.')
     parser.add_argument('--show', nargs='?', type=bool, default=False,
                         help='Whether to show the candidates plot.')
@@ -85,8 +84,10 @@ if __name__ == "__main__":
                         help='Whether to display zero-error boundaries in the candidates plot.')
     parser.add_argument('--save_plot', nargs='?', type=bool, default=True,
                         help='Whether to save the candidates plot.')
-    parser.add_argument('--save_sets', nargs='?', type=bool, default=True,
+    parser.add_argument('--save_source_sets', nargs='?', type=bool, default=True,
                         help='Whether to save the source sets.')
+    parser.add_argument('--save_cluster_params', nargs='?', type=bool, default=True,
+                        help='Whether to save the cluster parameters.')
 
     args_dict = vars(parser.parse_args())
 
@@ -118,10 +119,10 @@ if __name__ == "__main__":
 
     # candidate selection arguments
     max_r = args_dict['can_max_r']
-    pm_errors = args_dict['can_pm_errors']
+    pm_error_weight = args_dict['can_pm_error_weight']
     g_delta = args_dict['can_g_delta']
     bp_rp_delta = args_dict['can_bp_rp_delta']
-    source_errors = args_dict['can_source_errors']
+    source_error_w = args_dict['can_source_error_weight']
 
     # plot arguments
     show = args_dict['show']
@@ -130,7 +131,8 @@ if __name__ == "__main__":
 
     # save arguments
     save_plot = args_dict['save_plot']
-    save_set = args_dict['save_sets']
+    save_source_sets = args_dict['save_source_sets']
+    save_cluster_params = args_dict['save_cluster_params']
 
     print('Building sets for:', cluster_names)
     print('Number of clusters:', len(cluster_names))
@@ -143,13 +145,13 @@ if __name__ == "__main__":
         print('Cluster:', cluster_name)
         print('Loading cluster parameters...', end=' ')
         if os.path.exists(cluster_path):
-            cluster_params = load_cluster_parameters(cluster_name, cluster_path)
+            cluster_params = load_cluster_parameters(cluster_path, cluster_name)
             if cluster_params is not None:
                 print('done')
                 cluster = Cluster(cluster_params)
 
-                save_dir = os.path.join(data_dir, 'clusters', cluster.name)
-                cone_path = os.path.join(save_dir, 'cone.vot.gz')
+                cluster_dir = os.path.join(data_dir, 'clusters', cluster.name)
+                cone_path = os.path.join(cluster_dir, 'cone.vot.gz')
                 if not os.path.exists(cone_path):
                     cone_search([cluster], data_dir, credentials_path, cone_radius=cone_radius,
                                 pm_sigmas=cone_pm_sigmas, plx_sigmas=cone_plx_sigmas)
@@ -188,18 +190,19 @@ if __name__ == "__main__":
                             print(f'No comparison members for cluster {cluster.name} were loaded, path to '
                                   f'comparison members {os.path.abspath(comparison_path)} does not exist.')
 
-                        isochrone = make_isochrone(isochrone_path, cluster)
+                        isochrone = load_isochrone(isochrone_path, cluster)
 
                         print('Parsing cone... ', end=' ')
                         t0 = time.time()
-                        members, candidates, non_members, comparison = parse_cone(cluster, cone, isochrone, member_ids,
+                        members, candidates, non_members, comparison = parse_cone(cone, cluster, isochrone, member_ids,
                                                                                   member_probs=member_probs,
                                                                                   comparison_ids=comparison_ids,
                                                                                   comparison_probs=comparison_probs,
-                                                                                  max_r=max_r, pm_errors=pm_errors,
+                                                                                  max_r=max_r,
+                                                                                  pm_error_weight=pm_error_weight,
                                                                                   g_delta=g_delta,
                                                                                   bp_rp_delta=bp_rp_delta,
-                                                                                  source_errors=source_errors)
+                                                                                  source_error_weight=source_error_w)
                         print(f'done in {np.round(time.time() - t0, 1)} sec')
 
                         print(' ')
@@ -209,16 +212,21 @@ if __name__ == "__main__":
                         print(' ')
 
                         print('Plotting candidates...', end=' ')
-                        sources = Sources(members, candidates, non_members, comparison_members=comparison)
-                        plot_sources(sources, cluster, save_dir, isochrone=isochrone, plot_type='candidates',
+                        sources = Sources(members, candidates, non_members, comparison=comparison)
+                        plot_sources(sources, cluster, cluster_dir, isochrone=isochrone, plot_type='candidates',
                                      show_boundaries=show_boundaries, show_features=show_features, show=show,
                                      save=save_plot)
                         print('done')
 
-                        if save_set:
-                            print('Saving sets...', end=' ')
-                            save_sets(data_dir, cluster, members, candidates, non_members, comparison)
-                            print(f'done, saved in {os.path.abspath(save_dir)}')
+                        if save_source_sets:
+                            print('Saving source sets...', end=' ')
+                            save_sets(cluster_dir, members, candidates, non_members, comparison)
+                            print(f'done, saved in {os.path.abspath(cluster_dir)}')
+
+                        if save_cluster_params:
+                            print('Saving cluster parameters...', end=' ')
+                            save_cluster(cluster_dir, cluster)
+                            print(f'done, saved in {os.path.abspath(cluster_dir)}')
 
                     else:
                         print(f'There are only {len(hp_members)} members available available with a probability '

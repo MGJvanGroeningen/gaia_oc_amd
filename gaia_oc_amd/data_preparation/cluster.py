@@ -57,7 +57,7 @@ class Cluster:
 
         self.g_delta = None
         self.bp_rp_delta = None
-        self.source_errors = None
+        self.source_error_weight = None
 
         if cluster_parameters is not None:
             for param in cluster_parameters:
@@ -72,7 +72,10 @@ class Cluster:
             members (pd.Dataframe): Dataframe containing members of the open cluster
 
         """
-        for param in ['ra', 'dec', 'pmra', 'pmdec', 'parallax']:
+        self.ra = members['ra'].mean()
+        self.dec = members['dec'].mean()
+
+        for param in ['pmra', 'pmdec', 'parallax']:
             setattr(self, param, most_likely_value(members[param], members[f'{param}_error']))
         self.dist = 1000 / self.parallax
 
@@ -84,8 +87,8 @@ class Cluster:
         self.pmdec_error = members['pmdec'].std()
         self.parallax_error = members['parallax'].std()
 
-    def set_feature_parameters(self, members, max_r=60., pm_errors=5., g_delta=1.5, bp_rp_delta=0.5, source_errors=3.,
-                               verbose=False):
+    def set_feature_parameters(self, members, max_r=60., pm_error_weight=5., g_delta=1.5, bp_rp_delta=0.5,
+                               source_error_weight=3., verbose=False):
         """Function that sets the parameters which are used to calculate the training features.
         These parameters define the zero-error boundaries between candidates and non-members.
 
@@ -93,11 +96,11 @@ class Cluster:
             members (pd.Dataframe): Dataframe containing members of the open cluster
             max_r (float): Maximum radius, which is converted to parallax space to determine
                 the parallax zero-error boundary
-            pm_errors (float): The number of times the standard deviation in the cluster member
-                proper motion is used in the proper motion zero-error boundary
+            pm_error_weight (float): The weight of the standard deviation in the cluster member
+                proper motion in the definition of the zero-error boundary
             g_delta (float): G magnitude zero-error boundary
             bp_rp_delta (float): BP-RP colour zero-error boundary
-            source_errors (float): The number of sigma a candidate may deviate from zero-error boundary
+            source_error_weight (float): The number of sigma a candidate may deviate from zero-error boundary
             verbose (bool): Whether to print the feature parameters
 
         """
@@ -105,8 +108,8 @@ class Cluster:
         self.std_of_pmdec_mean = np.sqrt(1 / np.sum(1 / members['pmdec_error'] ** 2))
         self.std_of_plx_mean = np.sqrt(1 / np.sum(1 / members['parallax_error'] ** 2))
 
-        self.pmra_delta = 3 * self.std_of_pmra_mean + pm_errors * self.pmra_error
-        self.pmdec_delta = 3 * self.std_of_pmdec_mean + pm_errors * self.pmdec_error
+        self.pmra_delta = 3 * self.std_of_pmra_mean + pm_error_weight * self.pmra_error
+        self.pmdec_delta = 3 * self.std_of_pmdec_mean + pm_error_weight * self.pmdec_error
 
         max_plx_delta_plus = abs(self.parallax - 1000 / (1000 / self.parallax + max_r))
         max_plx_delta_min = abs(self.parallax - 1000 / (1000 / self.parallax - max_r))
@@ -115,7 +118,7 @@ class Cluster:
 
         self.g_delta = g_delta
         self.bp_rp_delta = bp_rp_delta
-        self.source_errors = source_errors
+        self.source_error_weight = source_error_weight
 
         if verbose:
             print('Standard deviations of the cluster mean')

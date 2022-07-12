@@ -95,15 +95,15 @@ def step(data_set, model, optimizer, criterion, epoch, mode='train'):
     return loss, pos_acc, neg_acc
 
 
-def train_model(model, train_dataset, val_dataset, save_path, num_epochs=40, lr=1e-6, l2=1e-5, weight_imbalance=1.,
-                early_stopping_threshold=5, load_model=False):
+def train_model(model, train_dataset, val_dataset, model_parameters_save_path, num_epochs=40, lr=1e-6, l2=1e-5,
+                weight_imbalance=1., early_stopping_threshold=5, load_model=False):
     """Trains the deep sets model on a dataset of open cluster members and non-members.
 
     Args:
         model (nn.Module): Deep Sets model
         train_dataset (DeepSetsDataset): Training dataset
         val_dataset (DeepSetsDataset): Validation dataset
-        save_path (str): Path where the model parameters will be saved
+        model_parameters_save_path (str): Path where the model parameters will be saved
             (also the path from which model parameters will be loaded)
         num_epochs (int): The number of epochs to train the model for.
         lr (float): Learning rate
@@ -118,10 +118,10 @@ def train_model(model, train_dataset, val_dataset, save_path, num_epochs=40, lr=
         accuracies for every epoch
     """
     if load_model:
-        if os.path.exists(save_path):
-            model.load_state_dict(torch.load(save_path))
+        if os.path.exists(model_parameters_save_path):
+            model.load_state_dict(torch.load(model_parameters_save_path))
         else:
-            print(f'Model not loaded. No model exits at {save_path}')
+            print(f'Model not loaded. No model exits at {model_parameters_save_path}')
 
     weight_class = torch.FloatTensor([1, weight_imbalance])
     criterion = torch.nn.CrossEntropyLoss(weight=weight_class, reduction='sum')
@@ -150,7 +150,7 @@ def train_model(model, train_dataset, val_dataset, save_path, num_epochs=40, lr=
 
         # Save the model state if the loss is smaller than any previous epoch
         if loss < min_val_loss:
-            torch.save(model.state_dict(), save_path)
+            torch.save(model.state_dict(), model_parameters_save_path)
             early_stopping_step = 0
 
         min_val_loss = min(min_val_loss, loss)

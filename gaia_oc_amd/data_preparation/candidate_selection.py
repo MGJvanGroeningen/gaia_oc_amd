@@ -50,6 +50,7 @@ def isochrone_candidate_condition(cluster, isochrone):
 
     Args:
         cluster (Cluster): Cluster object containing the cluster properties.
+        isochrone (Dataframe): Dataframe containing the colour and magnitude of the isochrone.
 
     Returns:
         can_condition (function): Candidate selection function
@@ -71,6 +72,7 @@ def candidate_conditions(cluster, isochrone):
 
     Args:
         cluster (Cluster): Cluster object containing the cluster properties.
+        isochrone (Dataframe): Dataframe containing the colour and magnitude of the isochrone.
 
     Returns:
         can_condition (function): Candidate selection function

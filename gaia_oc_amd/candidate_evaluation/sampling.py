@@ -1,57 +1,72 @@
 import numpy as np
-from scipy.stats import multivariate_normal
 
 
-def get_corr_idx(row, col):
-    return 3 * min(row, col) + max(row, col) - int(np.sum(np.arange(min(row, col) + 2)))
+def means_and_covariance_matrix(sources, properties):
+    """Determines the means and covariance matrix for a set of sources of a number of properties.
 
+    Args:
+        sources (Dataframe): Dataframe containing sources for which we want to determine
+            the means and covariance matrix
+        properties (str, list): Labels of the properties for which to determine the means and covariances
 
-def mean_and_cov_matrix(sources):
+    Returns:
+        means (float, array): Array with mean properties of the sources,
+            dimensions (n_sources, n_properties)
+        cov_matrices (float, array): Array with the property covariances of the sources,
+            dimensions (n_sources, n_properties, n_properties)
+
+    """
     n_sources = len(sources)
+    n_properties = len(properties)
+    source_columns = sources.columns.to_list()
 
-    sample_properties = ['parallax', 'pmra', 'pmdec', 'phot_g_mean_mag', 'bp_rp']
-    sample_error_properties = ['parallax_error', 'pmra_error', 'pmdec_error', 'phot_g_mean_mag_error', 'bp_rp_error']
-    astrometric_corr_properties = ['parallax_pmra_corr', 'parallax_pmdec_corr', 'pmra_pmdec_corr']
-
-    n_astrometric_properties = 3
-    n_properties = len(sample_properties)
+    property_errors = [prop + '_error' for prop in properties]
 
     means = np.zeros((n_properties, n_sources))
     cov_matrices = np.zeros((n_properties, n_properties, n_sources))
 
     for i in range(n_properties):
-        if i < n_astrometric_properties:
-            means[i] = sources[sample_properties[i]]
-            for j in range(i, n_astrometric_properties):
-                if i == j:
-                    sigma = sources[sample_error_properties[i]].to_numpy()
-                    cov_matrices[i, j] = sigma ** 2
-                else:
-                    corr_name_idx = get_corr_idx(i, j)
-                    corr = sources[astrometric_corr_properties[corr_name_idx]].to_numpy()
-                    sigma_i = sources[sample_error_properties[i]].to_numpy()
-                    sigma_j = sources[sample_error_properties[j]].to_numpy()
+        means[i] = sources[properties[i]]
+        for j in range(i, n_properties):
+            if i == j:
+                sigma = sources[property_errors[i]].to_numpy()
+                cov_matrices[i, j] = sigma ** 2
+            else:
+                property_corr_label = properties[i] + '_' + properties[j] + '_corr'
+                if property_corr_label in source_columns:
+                    corr = sources[property_corr_label].to_numpy()
+                    sigma_i = sources[property_errors[i]].to_numpy()
+                    sigma_j = sources[property_errors[j]].to_numpy()
                     cov = corr * sigma_i * sigma_j
-                    cov_matrices[i, j] = cov
-                    cov_matrices[j, i] = cov
-        else:
-            means[i] = sources[sample_properties[i]]
-            sigma = sources[sample_error_properties[i]].to_numpy()
-            cov_matrices[i, i] = sigma ** 2
+                else:
+                    cov = 0
+                cov_matrices[i, j] = cov
+                cov_matrices[j, i] = cov
     return means, cov_matrices
 
 
-def sample_sources(sources, means, cov_matrices):
-    sources_sample = sources.copy()
-    n_sources = len(sources_sample)
+def sample_sources(sources, sample_properties, n_samples=1):
+    """Creates an array of sampled properties for a set of sources.
 
-    sample_properties = ['parallax', 'pmra', 'pmdec', 'phot_g_mean_mag', 'bp_rp']
+    Args:
+        sources (Dataframe): Dataframe containing sources for which we want to sample some properties
+        sample_properties (str, list): Labels of the properties we want to sample
+        n_samples (int): The number of samples
+
+    Returns:
+        samples (float, array): Array with the sampled properties of the sources,
+            dimensions (n_samples, n_sources, n_properties)
+
+    """
+    n_sources = len(sources)
     n_properties = len(sample_properties)
+    samples = np.zeros((n_sources, n_samples, n_properties))
 
-    samples = np.zeros((n_sources, n_properties))
+    # Determine the means and covariance matrix of the astrometric and photometric properties of the sources
+    property_means, property_cov_matrices = means_and_covariance_matrix(sources, sample_properties)
+
     for i in range(n_sources):
-        samples[i] = multivariate_normal(mean=means[:, i], cov=cov_matrices[:, :, i]).rvs(1)
-
-    sources_sample[sample_properties] = samples
-
-    return sources_sample
+        samples[i] = np.random.multivariate_normal(mean=property_means[:, i], cov=property_cov_matrices[:, :, i],
+                                                   size=n_samples)
+    samples = np.swapaxes(samples, 0, 1)
+    return samples
