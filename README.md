@@ -51,6 +51,8 @@ where the clusters argument is either the name of a single cluster as given in t
 
 ## Training the model
 
+**Note: parameters of an already trained model are available in the 'deep_sets_model' folder. You can skip this step if you only want to use the trained model.**
+
 Training the model can be done with
 
 `python train_deep_sets_model.py [clusters]`,
@@ -63,7 +65,7 @@ After training, we can use the model to find additional members of open clusters
 
 `python evaluate_clusters.py [clusters]`,
 
-where the clusters arguments works the same as before. Candidate membership probabilities are saved in a candidates.csv file in the data/results directory of the corresponding cluster. The script also creates a number of plots that show the distribution of the obtained members and compares it to either the training members or a supplied set of comparison members.
+where the clusters arguments works the same as before. By default, this function looks for model parameters in a 'deep_sets_model' directory. Candidate membership probabilities are saved in a candidates.csv file in the data/results directory of the corresponding cluster. The script also creates a number of plots that show the distribution of the obtained members and compares it to either the training members or a supplied set of comparison members.
 
 ## Exploring the code
 
