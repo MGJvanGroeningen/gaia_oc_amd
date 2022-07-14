@@ -95,7 +95,7 @@ def step(data_set, model, optimizer, criterion, epoch, mode='train'):
     return loss, pos_acc, neg_acc
 
 
-def train_model(model, train_dataset, val_dataset, model_parameters_save_path, num_epochs=40, lr=1e-6, l2=1e-5,
+def train_model(model, train_dataset, val_dataset, model_save_dir, num_epochs=40, lr=1e-6, l2=1e-5,
                 weight_imbalance=1., early_stopping_threshold=5, load_model=False):
     """Trains the deep sets model on a dataset of open cluster members and non-members.
 
@@ -103,7 +103,7 @@ def train_model(model, train_dataset, val_dataset, model_parameters_save_path, n
         model (nn.Module): Deep Sets model
         train_dataset (DeepSetsDataset): Training dataset
         val_dataset (DeepSetsDataset): Validation dataset
-        model_parameters_save_path (str): Path where the model parameters will be saved
+        model_save_dir (str): Path to the directory where the model parameters will be saved
             (also the path from which model parameters will be loaded)
         num_epochs (int): The number of epochs to train the model for.
         lr (float): Learning rate
@@ -117,11 +117,15 @@ def train_model(model, train_dataset, val_dataset, model_parameters_save_path, n
         metrics (dict): Dictionary containing the loss and (non-)member classification
         accuracies for every epoch
     """
-    if load_model:
-        if os.path.exists(model_parameters_save_path):
-            model.load_state_dict(torch.load(model_parameters_save_path))
-        else:
-            print(f'Model not loaded. No model exits at {model_parameters_save_path}')
+    model_parameters_save_path = os.path.join(model_save_dir, 'model_parameters')
+    if not os.path.exists(model_save_dir):
+        os.mkdir(model_save_dir)
+    else:
+        if load_model:
+            if os.path.exists(model_parameters_save_path):
+                model.load_state_dict(torch.load(model_parameters_save_path))
+            else:
+                print(f'Model not loaded. No model exits at {model_parameters_save_path}')
 
     weight_class = torch.FloatTensor([1, weight_imbalance])
     criterion = torch.nn.CrossEntropyLoss(weight=weight_class, reduction='sum')
@@ -146,7 +150,7 @@ def train_model(model, train_dataset, val_dataset, model_parameters_save_path, n
             metrics[f'{mode}_neg_acc'].append(neg_acc)
 
         print(' ')
-        sleep(0.1)
+        sleep(0.1)  # prevents printing of progress bars from messing up
 
         # Save the model state if the loss is smaller than any previous epoch
         if loss < min_val_loss:

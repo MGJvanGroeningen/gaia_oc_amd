@@ -133,11 +133,10 @@ if __name__ == "__main__":
 
     # Train the model
     print(' ')
-    model_parameters_save_path = os.path.join(model_save_dir, 'model_parameters')
-    metrics = train_model(model, train_dataset, val_dataset, model_parameters_save_path=model_parameters_save_path,
+    metrics = train_model(model, train_dataset, val_dataset, model_save_dir=model_save_dir,
                           num_epochs=n_epochs, lr=lr, l2=l2, weight_imbalance=weight_imbalance,
                           early_stopping_threshold=early_stopping_threshold, load_model=load_model)
-    print(f'Saved model parameters at {os.path.abspath(model_parameters_save_path)}')
+    print(f'Saved model parameters in {os.path.abspath(model_save_dir)}')
 
     # Show training progress
     plot_loss_accuracy(metrics, model_save_dir, show, save_plot)
