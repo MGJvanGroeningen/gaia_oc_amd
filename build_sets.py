@@ -44,6 +44,8 @@ if __name__ == "__main__":
     parser.add_argument('--cone_plx_sigmas', nargs='?', type=float, default=10.,
                         help='How many sigmas away from the cluster mean in parallax '
                              'to look for sources for the cone search.')
+    parser.add_argument('--cone_verbose', nargs='?', type=bool, default=False,
+                        help='Whether to print information about the cone search download process.')
     parser.add_argument('--prob_threshold', nargs='?', type=float, default=1.0,
                         help='Minimum threshold for the probability of members to be used for training the model. '
                              'This threshold is exceeded if there are less than n_min_members members')
@@ -106,6 +108,7 @@ if __name__ == "__main__":
     cone_radius = args_dict['cone_radius']
     cone_pm_sigmas = args_dict['cone_pm_sigmas']
     cone_plx_sigmas = args_dict['cone_plx_sigmas']
+    cone_verbose = args_dict['cone_verbose']
 
     # members arguments
     prob_threshold = args_dict['prob_threshold']
@@ -134,15 +137,17 @@ if __name__ == "__main__":
     save_source_sets = args_dict['save_source_sets']
     save_cluster_params = args_dict['save_cluster_params']
 
+    n_clusters = len(cluster_names)
     print('Building sets for:', cluster_names)
-    print('Number of clusters:', len(cluster_names))
+    print('Number of clusters:', n_clusters)
 
     if not os.path.exists(data_dir):
         os.mkdir(data_dir)
 
-    for cluster_name in cluster_names:
+    for idx, cluster_name in enumerate(cluster_names):
+        t0 = time.time()
         print(' ')
-        print('Cluster:', cluster_name)
+        print('Cluster:', cluster_name, f' ({idx + 1} / {n_clusters})')
         print('Loading cluster parameters...', end=' ')
         if os.path.exists(cluster_path):
             cluster_params = load_cluster_parameters(cluster_path, cluster_name)
@@ -154,7 +159,7 @@ if __name__ == "__main__":
                 cone_path = os.path.join(cluster_dir, 'cone.vot.gz')
                 if not os.path.exists(cone_path):
                     cone_search([cluster], data_dir, credentials_path, cone_radius=cone_radius,
-                                pm_sigmas=cone_pm_sigmas, plx_sigmas=cone_plx_sigmas)
+                                pm_sigmas=cone_pm_sigmas, plx_sigmas=cone_plx_sigmas, verbose=cone_verbose)
 
                 print('Loading cone data...', end=' ')
                 cone = load_cone(cone_path, cluster)
@@ -193,7 +198,6 @@ if __name__ == "__main__":
                         isochrone = load_isochrone(isochrone_path, cluster)
 
                         print('Parsing cone... ', end=' ')
-                        t0 = time.time()
                         members, candidates, non_members, comparison = parse_cone(cone, cluster, isochrone, member_ids,
                                                                                   member_probs=member_probs,
                                                                                   comparison_ids=comparison_ids,
@@ -203,7 +207,7 @@ if __name__ == "__main__":
                                                                                   g_delta=g_delta,
                                                                                   bp_rp_delta=bp_rp_delta,
                                                                                   source_error_weight=source_error_w)
-                        print(f'done in {np.round(time.time() - t0, 1)} sec')
+                        print(f'done')
 
                         print(' ')
                         print('Members:', len(members))
@@ -218,15 +222,13 @@ if __name__ == "__main__":
                                      save=save_plot)
                         print('done')
 
+                        print('Saving source sets and cluster data...', end=' ')
                         if save_source_sets:
-                            print('Saving source sets...', end=' ')
                             save_sets(cluster_dir, members, candidates, non_members, comparison)
-                            print(f'done, saved in {os.path.abspath(cluster_dir)}')
 
                         if save_cluster_params:
-                            print('Saving cluster parameters...', end=' ')
                             save_cluster(cluster_dir, cluster)
-                            print(f'done, saved in {os.path.abspath(cluster_dir)}')
+                        print(f'done, saved in {os.path.abspath(cluster_dir)}')
 
                     else:
                         print(f'There are only {len(hp_members)} members available available with a probability '
@@ -242,3 +244,6 @@ if __name__ == "__main__":
         else:
             raise ValueError(f'The path from which to load the cluster parameters '
                              f'{os.path.abspath(cluster_path)} does not exist!')
+        print(f'Cluster processed in {np.round(time.time() - t0, 1)} sec')
+        print(' ')
+        print(40 * '==')

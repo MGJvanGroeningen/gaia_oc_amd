@@ -85,12 +85,13 @@ if __name__ == "__main__":
     model = D5(hidden_size, x_dim=2 * len(training_features), pool='mean', out_dim=2)
     model.load_state_dict(load(os.path.join(model_save_dir, 'model_parameters')))
 
+    n_clusters = len(cluster_names)
     print('Evaluating candidates for:', cluster_names)
-    print('Number of clusters:', len(cluster_names))
+    print('Number of clusters:', n_clusters)
 
-    for cluster_name in cluster_names:
+    for idx, cluster_name in enumerate(cluster_names):
         print(' ')
-        print('Cluster:', cluster_name)
+        print('Cluster:', cluster_name, f' ({idx + 1} / {n_clusters})')
 
         # Define the cluster data/results directory
         cluster_dir = os.path.join(data_dir, 'clusters', cluster_name)
@@ -124,3 +125,5 @@ if __name__ == "__main__":
             make_plots(sources, cluster, cluster_dir, isochrone, prob_threshold=prob_threshold, tidal_radius=r_t,
                        compare_train_members=compare_train_members, show=show, save=save_plots)
         print(f'done, saved in {os.path.abspath(cluster_dir)}')
+        print(' ')
+        print(150 * '=')

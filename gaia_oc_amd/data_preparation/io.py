@@ -205,7 +205,6 @@ def load_sets(save_dir):
         save_dir (str): Directory where the sets are loaded from
 
     Returns:
-        cluster (Cluster): Cluster object
         members (Dataframe): Dataframe containing member sources
         candidates (Dataframe): Dataframe containing candidate sources
         non_members (Dataframe): Dataframe containing non_member sources
