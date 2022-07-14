@@ -145,7 +145,6 @@ def cone_search(clusters, save_dir, gaia_credentials_path, table="gaiaedr3.gaia_
         pmra, pmdec = cluster.pmra, cluster.pmdec
         pmra_e, pmdec_e = cluster.pmra_error, cluster.pmdec_error
         plx, plx_e = cluster.parallax, cluster.parallax_error
-        plx_delta = abs(plx - 1000 / (1000 / plx - cone_radius))
 
         if query_columns is None:
             # Default columns
@@ -169,13 +168,13 @@ def cone_search(clusters, save_dir, gaia_credentials_path, table="gaiaedr3.gaia_
                 WHERE
                     1 = CONTAINS(POINT('ICRS', {ra_column}, {dec_column}), CIRCLE('ICRS', {ra}, {dec}, {radius}))
                     AND sqrt(power((pmra - {pmra}) / ({pmra_e}), 2) + power((pmdec - {pmdec}) / ({pmdec_e}), 2)) <= {pm_sigmas}
-                    AND abs((parallax - {plx}) / ({plx_e} + {plx_delta} / {plx_sigmas})) <= {plx_sigmas}
+                    AND abs((parallax - {plx}) / ({plx_e})) <= {plx_sigmas}
                 """.format(**{'columns': columns, 'table_name': table,
                               'ra_column': Gaia.MAIN_GAIA_TABLE_RA, 'dec_column': Gaia.MAIN_GAIA_TABLE_DEC,
                               'ra': ra, 'dec': dec, 'radius': radius,
                               'pmra': pmra, 'pmdec': pmdec, 'pmra_e': pmra_e, 'pmdec_e': pmdec_e,
                               'pm_sigmas': pm_sigmas,
-                              'plx': plx, 'plx_e': plx_e, 'plx_delta': plx_delta,
+                              'plx': plx, 'plx_e': plx_e,
                               'plx_sigmas': plx_sigmas})
 
         print(f'Downloading {cluster.name} cone...', end=' ')
