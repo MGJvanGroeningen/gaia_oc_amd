@@ -158,7 +158,7 @@ if __name__ == "__main__":
                 cluster_dir = os.path.join(data_dir, 'clusters', cluster.name)
                 cone_path = os.path.join(cluster_dir, 'cone.vot.gz')
                 if not os.path.exists(cone_path):
-                    cone_search([cluster], data_dir, credentials_path, cone_radius=cone_radius,
+                    cone_search(cluster, data_dir, credentials_path, cone_radius=cone_radius,
                                 pm_sigmas=cone_pm_sigmas, plx_sigmas=cone_plx_sigmas, verbose=cone_verbose)
 
                 print('Loading cone data...', end=' ')

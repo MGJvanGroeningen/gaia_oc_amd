@@ -9,15 +9,15 @@ from lxml import etree
 from tqdm import tqdm
 
 
-def query_isochrone(save_dir, min_log_age=6.00, max_log_age=9.99, dlog_age=0.01, met=0.0152):
-    """Downloads isochrone data for a range of isochrone ages and a fixed metallicity.
+def query_isochrone(save_dir, min_log_age=6.00, max_log_age=9.99, dlog_age=0.01, metal_frac=0.0152):
+    """Downloads isochrone data for a range of isochrone ages and a fixed metallicity/metal fraction.
 
     Args:
         save_dir (str): Path to directory where the isochrone data will be stored.
         min_log_age (float): Minimum log(age) of the isochrone
         max_log_age (float): Maximum log(age) of the isochrone
         dlog_age (float): Step in log(age) of the isochrone
-        met (float): Metallicity of the isochrones
+        metal_frac (float): Metal fraction (Z) of the isochrones
 
     """
     website = 'http://stev.oapd.inaf.it/cgi-bin/cmd_3.6'
@@ -46,7 +46,7 @@ def query_isochrone(save_dir, min_log_age=6.00, max_log_age=9.99, dlog_age=0.01,
                    'isoc_lageupp': f'{max_log_age}',
                    'isoc_dlage': f'{dlog_age}',
                    'isoc_ismetlog': '0',
-                   'isoc_zlow': f'{met}',
+                   'isoc_zlow': f'{metal_frac}',
                    'isoc_zupp': '0.03',
                    'isoc_dz': '0.0',
                    'output_kind': '0',
@@ -108,13 +108,13 @@ def query_catalog(catalog, columns, save_path, cluster_column=None, id_column=No
     data.to_csv(save_path)
 
 
-def cone_search(clusters, save_dir, gaia_credentials_path, table="gaiaedr3.gaia_source", query_columns=None,
+def cone_search(cluster, save_dir, gaia_credentials_path, table="gaiaedr3.gaia_source", query_columns=None,
                 cone_radius=60., pm_sigmas=10., plx_sigmas=10., verbose=False):
     """Performs a cone search, centered on a specific cluster, on the data in the Gaia archive
     This results in a set of sources that includes the members, candidate members and informative non-members.
 
     Args:
-        clusters (Cluster, list): A list of cluster objects
+        cluster (Cluster): A Cluster object
         save_dir (str): Path to the directory where the cone search data will be saved
         gaia_credentials_path (str): Path to a file that contains a username and password
             to login to the Gaia archive
@@ -134,54 +134,53 @@ def cone_search(clusters, save_dir, gaia_credentials_path, table="gaiaedr3.gaia_
     if not os.path.exists(clusters_dir):
         os.mkdir(clusters_dir)
 
-    for cluster in clusters:
-        output_dir = os.path.join(clusters_dir, cluster.name)
-        if not os.path.exists(output_dir):
-            os.mkdir(output_dir)
-        output_file = os.path.join(output_dir, 'cone.vot.gz')
+    output_dir = os.path.join(clusters_dir, cluster.name)
+    if not os.path.exists(output_dir):
+        os.mkdir(output_dir)
+    output_file = os.path.join(output_dir, 'cone.vot.gz')
 
-        ra, dec = cluster.ra, cluster.dec
-        radius = cone_radius / cluster.dist * 180 / np.pi
-        pmra, pmdec = cluster.pmra, cluster.pmdec
-        pmra_e, pmdec_e = cluster.pmra_error, cluster.pmdec_error
-        plx, plx_e = cluster.parallax, cluster.parallax_error
+    ra, dec = cluster.ra, cluster.dec
+    radius = cone_radius / cluster.dist * 180 / np.pi
+    pmra, pmdec = cluster.pmra, cluster.pmdec
+    pmra_e, pmdec_e = cluster.pmra_error, cluster.pmdec_error
+    plx, plx_e = cluster.parallax, cluster.parallax_error
 
-        if query_columns is None:
-            # Default columns
-            columns = ['ra', 'dec', 'parallax', 'pmra', 'pmdec',
-                       'parallax_error', 'pmra_error', 'pmdec_error',
-                       'parallax_pmra_corr', 'parallax_pmdec_corr', 'pmra_pmdec_corr',
-                       'phot_g_mean_flux', 'phot_bp_mean_flux', 'phot_rp_mean_flux',
-                       'phot_g_mean_flux_error', 'phot_bp_mean_flux_error', 'phot_rp_mean_flux_error',
-                       'source_id',
-                       'phot_g_mean_mag', 'bp_rp',
-                       'l', 'b']
-        else:
-            columns = query_columns
-        columns = ','.join(map(str, columns))
+    if query_columns is None:
+        # Default columns
+        columns = ['ra', 'dec', 'parallax', 'pmra', 'pmdec',
+                   'parallax_error', 'pmra_error', 'pmdec_error',
+                   'parallax_pmra_corr', 'parallax_pmdec_corr', 'pmra_pmdec_corr',
+                   'phot_g_mean_flux', 'phot_bp_mean_flux', 'phot_rp_mean_flux',
+                   'phot_g_mean_flux_error', 'phot_bp_mean_flux_error', 'phot_rp_mean_flux_error',
+                   'source_id',
+                   'phot_g_mean_mag', 'bp_rp',
+                   'l', 'b']
+    else:
+        columns = query_columns
+    columns = ','.join(map(str, columns))
 
-        query = """
-                SELECT
-                    {columns}
-                FROM
-                    {table_name}
-                WHERE
-                    1 = CONTAINS(POINT('ICRS', {ra_column}, {dec_column}), CIRCLE('ICRS', {ra}, {dec}, {radius}))
-                    AND sqrt(power((pmra - {pmra}) / ({pmra_e}), 2) + power((pmdec - {pmdec}) / ({pmdec_e}), 2)) <= {pm_sigmas}
-                    AND abs((parallax - {plx}) / ({plx_e})) <= {plx_sigmas}
-                """.format(**{'columns': columns, 'table_name': table,
-                              'ra_column': Gaia.MAIN_GAIA_TABLE_RA, 'dec_column': Gaia.MAIN_GAIA_TABLE_DEC,
-                              'ra': ra, 'dec': dec, 'radius': radius,
-                              'pmra': pmra, 'pmdec': pmdec, 'pmra_e': pmra_e, 'pmdec_e': pmdec_e,
-                              'pm_sigmas': pm_sigmas,
-                              'plx': plx, 'plx_e': plx_e,
-                              'plx_sigmas': plx_sigmas})
+    query = """
+            SELECT
+                {columns}
+            FROM
+                {table_name}
+            WHERE
+                1 = CONTAINS(POINT('ICRS', {ra_column}, {dec_column}), CIRCLE('ICRS', {ra}, {dec}, {radius}))
+                AND sqrt(power((pmra - {pmra}) / ({pmra_e}), 2) + power((pmdec - {pmdec}) / ({pmdec_e}), 2)) <= {pm_sigmas}
+                AND abs((parallax - {plx}) / ({plx_e})) <= {plx_sigmas}
+            """.format(**{'columns': columns, 'table_name': table,
+                          'ra_column': Gaia.MAIN_GAIA_TABLE_RA, 'dec_column': Gaia.MAIN_GAIA_TABLE_DEC,
+                          'ra': ra, 'dec': dec, 'radius': radius,
+                          'pmra': pmra, 'pmdec': pmdec, 'pmra_e': pmra_e, 'pmdec_e': pmdec_e,
+                          'pm_sigmas': pm_sigmas,
+                          'plx': plx, 'plx_e': plx_e,
+                          'plx_sigmas': plx_sigmas})
 
-        print(f'Downloading {cluster.name} cone...', end=' ')
-        _ = Gaia.launch_job_async(query=query,
-                                  output_file=output_file,
-                                  output_format="votable",
-                                  verbose=verbose,
-                                  dump_to_file=True)
+    print(f'Downloading {cluster.name} cone...', end=' ')
+    _ = Gaia.launch_job_async(query=query,
+                              output_file=output_file,
+                              output_format="votable",
+                              verbose=verbose,
+                              dump_to_file=True)
 
     Gaia.logout()
