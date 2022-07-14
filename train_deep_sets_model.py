@@ -56,8 +56,6 @@ if __name__ == "__main__":
                         help='Whether to show the loss and accuracy plot.')
     parser.add_argument('--save_plot', nargs='?', type=bool, default=True,
                         help='Whether to save the loss and accuracy plot.')
-    parser.add_argument('--plot_save_dir', nargs='?', type=str, default='.',
-                        help='Directory where the loss and accuracy plot will be saved.')
 
     args_dict = vars(parser.parse_args())
 
@@ -93,7 +91,6 @@ if __name__ == "__main__":
 
     # save arguments
     save_plot = args_dict['save_plot']
-    plot_save_dir = args_dict['plot_save_dir']
 
     if not os.path.exists(model_save_dir):
         os.mkdir(model_save_dir)
@@ -143,6 +140,6 @@ if __name__ == "__main__":
     print(f'Saved model parameters at {os.path.abspath(model_parameters_save_path)}')
 
     # Show training progress
-    plot_loss_accuracy(metrics, plot_save_dir, show, save_plot)
+    plot_loss_accuracy(metrics, model_save_dir, show, save_plot)
     if save_plot:
-        print(f'Created loss and accuracy plot at {os.path.abspath(os.path.join(plot_save_dir, "loss_accuracy.png"))}')
+        print(f'Created loss and accuracy plot at {os.path.abspath(os.path.join(model_save_dir, "loss_accuracy.png"))}')
