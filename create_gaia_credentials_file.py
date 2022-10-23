@@ -8,23 +8,17 @@ if __name__ == '__main__':
                         help='ESA Gaia Archive username')
     parser.add_argument('password', nargs='?', type=str,
                         help='ESA Gaia Archive password')
-    parser.add_argument('--data_dir', nargs='?', type=str, default='data',
-                        help='Directory where data (e.g. cone searches, source sets) '
-                             'and results will be saved and retrieved.')
-
+    parser.add_argument('--save_dir', nargs='?', type=str, default='.',
+                        help='Directory where credentials file will be saved.')
     args_dict = vars(parser.parse_args())
-    data_dir = args_dict['data_dir']
-    if not os.path.exists(data_dir):
-        default_data_dir = os.path.join(os.getcwd(), 'data')
-        print(f'Using default save path {default_data_dir}')
-        if not os.path.exists(default_data_dir):
-            os.mkdir(default_data_dir)
-        data_dir = default_data_dir
 
     username = args_dict['username']
     password = args_dict['password']
+    save_dir = args_dict['save_dir']
+    if not os.path.exists(save_dir):
+        os.mkdir(save_dir)
 
-    credentials_file = os.path.join(data_dir, 'gaia_credentials')
+    credentials_file = os.path.join(save_dir, 'gaia_credentials')
 
     with open(credentials_file, 'w') as f:
         f.write(username + "\n")
