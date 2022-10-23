@@ -10,3 +10,4 @@ astropy
 astroquery
 requests
 lxml
+gaiadr3-zeropoint
