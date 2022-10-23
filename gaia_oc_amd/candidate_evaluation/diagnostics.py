@@ -4,7 +4,7 @@ from scipy.spatial import distance_matrix
 from scipy.sparse.csgraph import csgraph_from_dense, minimum_spanning_tree
 
 from gaia_oc_amd.data_preparation.features import radius_feature_function
-from gaia_oc_amd.data_preparation.utils import projected_coordinates
+from gaia_oc_amd.utils import projected_coordinates
 
 
 def make_density_profile(members, cluster):
@@ -22,13 +22,14 @@ def make_density_profile(members, cluster):
         sigmas (float, array): Density errors of the density profile
 
     """
-    r = members.apply(radius_feature_function(cluster), axis=1)
-    r_max = np.max(r)
+    r = members.apply(radius_feature_function(cluster.ra, cluster.dec, cluster.dist), axis=1)
+    r_max = r.max()
 
     # Bins that define the radius boundaries of the concentric shells in which to count members
-    n_bins = 16
-    if r_max > 20:
-        bins = np.concatenate((np.arange(10, step=0.5), np.logspace(1, np.log10(r_max), num=n_bins, endpoint=True)))
+    if r_max > 25:
+        bins = np.concatenate((np.arange(10, step=0.5), np.logspace(1, np.log10(r_max), num=15, endpoint=True)))
+    elif r_max < 3:
+        bins = np.array([0, r_max / 2, r_max])
     else:
         bins = np.arange(int(r_max))
 
@@ -61,7 +62,8 @@ def make_density_profile(members, cluster):
 
 
 def king_model(rs, k, r_c, r_t, c):
-    """Calculates the surface stellar density as defined by the King model for an array of radii.
+    """Calculates the surface stellar density at a given radius from a cluster with central density k,
+    core radius r_c, tidal radius r_t and background density c as defined by the King model.
 
     Args:
         rs (float, array): Array of radii for which to calculate the density
@@ -186,12 +188,12 @@ def make_mass_segregation_profile(members, cluster, min_n_mst=5, max_n_mst=100, 
     """
     n_members = len(members)
 
-    # Use the G magnitude to sort the members by mass (brighter stars are more massive at roughly the same distance)
+    # Use the G magnitude to sort the members by mass
     members = members.sort_values(by=['phot_g_mean_mag']).copy()
 
     # Get the projected coordinates of the (sorted) members
     ra, dec = members['ra'], members['dec']
-    x, y = projected_coordinates(ra, dec, cluster)
+    x, y = projected_coordinates(ra, dec, cluster.ra, cluster.dec, cluster.dist)
     x, y = x.values, y.values
 
     n_mst = np.arange(min_n_mst, min(n_members, max_n_mst))

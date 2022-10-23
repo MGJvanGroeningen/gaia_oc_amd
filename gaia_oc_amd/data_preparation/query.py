@@ -109,7 +109,7 @@ def query_catalog(catalog, columns, save_path, cluster_column=None, id_column=No
 
 
 def cone_search(cluster, save_dir, gaia_credentials_path, table="gaiaedr3.gaia_source", query_columns=None,
-                cone_radius=60., pm_sigmas=10., plx_sigmas=10., verbose=False):
+                cone_radius=50., pm_sigmas=7., plx_sigmas=10.):
     """Performs a cone search, centered on a specific cluster, on the data in the Gaia archive
     This results in a set of sources that includes the members, candidate members and informative non-members.
 
@@ -125,24 +125,24 @@ def cone_search(cluster, save_dir, gaia_credentials_path, table="gaiaedr3.gaia_s
             cone sources may deviate from the mean
         plx_sigmas (float): How many standard deviations (of the cluster members) in parallax
             cone sources may deviate from the mean
-        verbose (bool): Whether to print information about the download process.
-
     """
     Gaia.login(credentials_file=gaia_credentials_path)
 
-    clusters_dir = os.path.join(save_dir, 'clusters')
-    if not os.path.exists(clusters_dir):
-        os.mkdir(clusters_dir)
+    if not os.path.exists(save_dir):
+        os.mkdir(save_dir)
 
-    output_dir = os.path.join(clusters_dir, cluster.name)
-    if not os.path.exists(output_dir):
-        os.mkdir(output_dir)
-    output_file = os.path.join(output_dir, 'cone.vot.gz')
+    cluster_dir = os.path.join(save_dir, cluster.name)
+    if not os.path.exists(cluster_dir):
+        os.mkdir(cluster_dir)
+    cone_file = os.path.join(cluster_dir, 'cone.vot.gz')
 
     ra, dec = cluster.ra, cluster.dec
+    if ra < 0:
+        ra += 360
     radius = cone_radius / cluster.dist * 180 / np.pi
     pmra, pmdec = cluster.pmra, cluster.pmdec
     pmra_e, pmdec_e = cluster.pmra_error, cluster.pmdec_error
+    pm_e = np.sqrt(pmra_e**2 + pmdec_e**2)
     plx, plx_e = cluster.parallax, cluster.parallax_error
 
     if query_columns is None:
@@ -154,10 +154,13 @@ def cone_search(cluster, save_dir, gaia_credentials_path, table="gaiaedr3.gaia_s
                    'phot_g_mean_flux_error', 'phot_bp_mean_flux_error', 'phot_rp_mean_flux_error',
                    'source_id',
                    'phot_g_mean_mag', 'bp_rp',
-                   'l', 'b']
+                   'l', 'b', 'nu_eff_used_in_astrometry', 'pseudocolour', 'ecl_lat', 'astrometric_params_solved']
     else:
         columns = query_columns
     columns = ','.join(map(str, columns))
+
+    plx_bound = plx_sigmas * plx_e
+    pm_bound = pm_sigmas * pm_e
 
     query = """
             SELECT
@@ -166,21 +169,19 @@ def cone_search(cluster, save_dir, gaia_credentials_path, table="gaiaedr3.gaia_s
                 {table_name}
             WHERE
                 1 = CONTAINS(POINT('ICRS', {ra_column}, {dec_column}), CIRCLE('ICRS', {ra}, {dec}, {radius}))
-                AND sqrt(power((pmra - {pmra}) / ({pmra_e}), 2) + power((pmdec - {pmdec}) / ({pmdec_e}), 2)) <= {pm_sigmas}
-                AND abs((parallax - {plx}) / ({plx_e})) <= {plx_sigmas}
+                AND abs(parallax - {plx}) <= {plx_bound}
+                AND sqrt(power(pmra - {pmra}, 2) + power(pmdec - {pmdec}, 2)) <= {pm_bound}
             """.format(**{'columns': columns, 'table_name': table,
                           'ra_column': Gaia.MAIN_GAIA_TABLE_RA, 'dec_column': Gaia.MAIN_GAIA_TABLE_DEC,
                           'ra': ra, 'dec': dec, 'radius': radius,
-                          'pmra': pmra, 'pmdec': pmdec, 'pmra_e': pmra_e, 'pmdec_e': pmdec_e,
-                          'pm_sigmas': pm_sigmas,
-                          'plx': plx, 'plx_e': plx_e,
-                          'plx_sigmas': plx_sigmas})
+                          'pmra': pmra, 'pmdec': pmdec, 'pm_bound': pm_bound,
+                          'plx': plx, 'plx_bound': plx_bound})
 
     print(f'Downloading {cluster.name} cone...', end=' ')
     _ = Gaia.launch_job_async(query=query,
-                              output_file=output_file,
+                              output_file=cone_file,
                               output_format="votable",
-                              verbose=verbose,
+                              verbose=False,
                               dump_to_file=True)
 
     Gaia.logout()
