@@ -1,60 +1,29 @@
 import os
 import json
+import pickle
 import numpy as np
 import pandas as pd
 from astropy.io.votable import parse
 
-from gaia_oc_amd.data_preparation.cluster import Cluster
-from gaia_oc_amd.data_preparation.utils import extinction_correction, unsplit_sky_positions, add_columns, \
-    phot_g_mean_mag_error_function, bp_rp_error_function
 
-
-def cluster_list(cluster_or_filename, data_path):
-    """Returns a list of cluster names based on a single cluster name or a file containing cluster names.
+def cluster_list(cluster_or_filename):
+    """Function for creating a list of cluster names. If the input of this function is a file path,
+    return a list of the lines in the file. If not, return a list with only the input string.
 
     Args:
         cluster_or_filename (str): Either the name of a cluster or the name of a file containing cluster names.
-        data_path (str): Path to the data directory
 
     Returns:
         cluster_names (str, list): List of cluster names.
 
     """
-    path = find_path(cluster_or_filename, data_path)
-    if os.path.exists(path):
-        with open(path, 'r') as f:
+    if os.path.exists(cluster_or_filename):
+        with open(cluster_or_filename, 'r') as f:
             cluster_names = f.read().splitlines()
         return cluster_names
     else:
         cluster_names = [cluster_or_filename]
         return cluster_names
-
-
-def find_path(filename_or_path, data_path):
-    """Looks for the likely existing path if given only a filename.
-
-    Args:
-        filename_or_path (str): Either the name of a cluster or the name of a file containing cluster names.
-        data_path (str): Path to the data directory
-
-    Returns:
-        path (str): Path related to the filename.
-
-    """
-    in_cwd_path = os.path.join(os.getcwd(), filename_or_path)
-    in_custom_data_path = os.path.join(data_path, filename_or_path)
-    if os.path.exists(filename_or_path):
-        path = filename_or_path
-        return path
-    elif os.path.exists(in_cwd_path):
-        path = in_cwd_path
-        return path
-    elif os.path.exists(in_custom_data_path):
-        path = in_custom_data_path
-        return path
-    else:
-        path = filename_or_path
-        return path
 
 
 def load_cluster_parameters(cluster_parameters_path, cluster_name):
@@ -68,12 +37,11 @@ def load_cluster_parameters(cluster_parameters_path, cluster_name):
         params (dict): Dictionary containing the parameters of a single cluster.
 
     """
-    cluster_params = pd.read_csv(cluster_parameters_path, index_col=0)
-    cluster_params = cluster_params[cluster_params['AgeNN'] != '']
+    cluster_params = pd.read_csv(cluster_parameters_path, index_col=0).dropna()
     cluster_params = cluster_params.rename(columns={'Cluster': 'name', 'RA_ICRS': 'ra', 'DE_ICRS': 'dec',
                                                     'pmRA_': 'pmra', 'pmDE': 'pmdec', 'e_pmRA_': 'pmra_error',
                                                     'e_pmDE': 'pmdec_error', 'plx': 'parallax',
-                                                    'e_plx': 'parallax_error', 'AgeNN': 'age', 'AVNN': 'a_v',
+                                                    'e_plx': 'parallax_error', 'AgeNN': 'age', 'AVNN': 'a0',
                                                     'DistPc': 'dist'})
     if cluster_name in cluster_params['name'].values:
         params = cluster_params[cluster_params['name'] == cluster_name].to_dict(orient='list')
@@ -83,12 +51,11 @@ def load_cluster_parameters(cluster_parameters_path, cluster_name):
         return None
 
 
-def load_cone(cone_path, cluster):
+def load_cone(cone_path):
     """Loads in the data of the stars found in the cone search. Also performs a number of preprocessing steps.
 
     Args:
         cone_path (str): Path to the (vot.gz) file where the cone search data is saved.
-        cluster (Cluster): Cluster object
 
     Returns:
         cone (Dataframe): Dataframe containing the data of the sources in the cone search.
@@ -97,57 +64,35 @@ def load_cone(cone_path, cluster):
     cone = parse(cone_path)
     cone = cone.get_first_table().to_table(use_names_over_ids=True)
     cone = cone.to_pandas()
-
-    # Drop sources with incomplete data
-    cone = cone.dropna()
-
-    # Correct for the parallax zero-point
-    cone['parallax'] += 0.017
-
-    # Correct the magnitude and colour for interstellar extinction
-    extinction_correction(cone, cluster)
-
-    # Adjust the galactic coordinates to prevent a split in the sky position plot
-    unsplit_sky_positions(cone, coordinate_system='galactic')
-
-    # Calculate magnitude and colour errors from the available flux data
-    add_columns([cone], [phot_g_mean_mag_error_function(), bp_rp_error_function()],
-                ['phot_g_mean_mag_error', 'bp_rp_error'])
-
-    # Set the default membership probability to zero
-    cone['PMemb'] = 0
     return cone
 
 
-def load_members(members_path, cluster_name, cluster_column='cluster', id_column='source_id', prob_column='PMemb'):
+def load_members(members_path, cluster_name):
     """Loads in the data of a membership list and selects the members of a single cluster.
 
     Args:
         members_path (str): Path to the (.csv) file where the member data is saved.
         cluster_name (str): Name of the cluster
-        cluster_column (str): Name of the cluster name column in the members dataframe
-        id_column (str): Name of the source identity column in the members dataframe
-        prob_column (str): Name of the membership probability column in the members dataframe
 
     Returns:
         cluster_members (Dataframe): Dataframe containing the data of the cluster member sources.
 
     """
     all_members = pd.read_csv(members_path, index_col=0)
-    all_members = all_members.rename(columns={cluster_column: 'cluster', id_column: 'source_id', prob_column: 'PMemb'})
-
     cluster_members = all_members[all_members['cluster'] == cluster_name]
     cluster_members = cluster_members.reset_index(drop=True)[['source_id', 'PMemb']]
     return cluster_members
 
 
-def load_isochrone(isochrone_path, cluster):
+def load_isochrone(isochrone_path, age, dist, oldest_stage=7):
     """Loads in the data of the isochrones and selects the isochrone of a particular age.
-    Also converts the converts the isochrone's absolute G magnitude to apparent magnitude.
+    Also converts the isochrone's absolute G magnitude to apparent magnitude.
 
     Args:
         isochrone_path (str): Path to the (.dat) file where the isochrone data saved.
-        cluster (Cluster): Cluster object
+        age (float): Age of the cluster
+        dist (float): Distance to the cluster
+        oldest_stage (int): Oldest evolutionary stage to include in the isochrone (default is early ASG)
 
     Returns:
         isochrone (Dataframe): Dataframe containing colour and magnitude values of the isochrone curve.
@@ -167,35 +112,34 @@ def load_isochrone(isochrone_path, cluster):
 
     # Select the isochrone with the age of the cluster
     ages = np.array(list(set(isochrones['logAge'].values)))
-    closest_age = ages[np.argmin(np.abs(ages - cluster.age))]
+    closest_age = ages[np.argmin(np.abs(ages - age))]
     isochrone = isochrones[isochrones['logAge'] == closest_age]
 
     # Exclude data beyond the evolutionary stage of the early asymptotic giant branch
-    isochrone = isochrone[isochrone['label'] <= 7]
+    isochrone = isochrone[isochrone['label'] <= oldest_stage].reset_index(drop=True)
 
     # Convert to apparent magnitude
-    distance_modulus = 5 * np.log10(cluster.dist) - 5
+    distance_modulus = 5 * np.log10(dist) - 5
     isochrone['phot_g_mean_mag'] += distance_modulus
 
-    return isochrone
+    return isochrone[['bp_rp', 'phot_g_mean_mag']]
 
 
-def save_sets(save_dir, members, candidates, non_members, comparison=None):
+def save_sets(save_dir, train_members=None, candidates=None, non_members=None, comparison_members=None):
     """Saves the sets of sources in .csv files.
 
     Args:
         save_dir (str): Directory where the sets are saved
-        members (Dataframe): Dataframe containing member sources
+        train_members (Dataframe): Dataframe containing train member sources
         candidates (Dataframe): Dataframe containing candidate sources
         non_members (Dataframe): Dataframe containing non_member sources
-        comparison (Dataframe): Dataframe containing comparison sources
+        comparison_members (Dataframe): Dataframe containing comparison member sources
 
     """
-    members.to_csv(os.path.join(save_dir, 'members.csv'))
-    candidates.to_csv(os.path.join(save_dir, 'candidates.csv'))
-    non_members.to_csv(os.path.join(save_dir, 'non_members.csv'))
-    if comparison is not None:
-        comparison.to_csv(os.path.join(save_dir, 'comparison.csv'))
+    for subset, subset_name in zip([train_members, candidates, non_members, comparison_members],
+                                   ['train_members', 'candidates', 'non_members', 'comparison_members']):
+        if subset is not None:
+            subset.to_csv(os.path.join(save_dir, subset_name + '.csv'))
 
 
 def load_sets(save_dir):
@@ -205,20 +149,22 @@ def load_sets(save_dir):
         save_dir (str): Directory where the sets are loaded from
 
     Returns:
-        members (Dataframe): Dataframe containing member sources
+        train_members (Dataframe): Dataframe containing train member sources
         candidates (Dataframe): Dataframe containing candidate sources
-        non_members (Dataframe): Dataframe containing non_member sources
-        comparison (Dataframe): Dataframe containing comparison sources
+        non_members (Dataframe): Dataframe containing non-member sources
+        comparison_members (Dataframe): Dataframe containing comparison member sources
 
     """
-    members = pd.read_csv(os.path.join(save_dir, 'members.csv'))
-    candidates = pd.read_csv(os.path.join(save_dir, 'candidates.csv'))
-    non_members = pd.read_csv(os.path.join(save_dir, 'non_members.csv'))
-    if os.path.exists(os.path.join(save_dir, 'comparison.csv')):
-        comparison = pd.read_csv(os.path.join(save_dir, 'comparison.csv'))
-    else:
-        comparison = None
-    return members, candidates, non_members, comparison
+    files = ['train_members.csv', 'candidates.csv', 'non_members.csv', 'comparison_members.csv']
+    sources = []
+    for file in files:
+        path = os.path.join(save_dir, file)
+        if os.path.exists(path):
+            sources.append(pd.read_csv(path, index_col=0))
+        else:
+            sources.append(None)
+    train_members, candidates, non_members, comparison_members = tuple(sources)
+    return train_members, candidates, non_members, comparison_members
 
 
 def save_cluster(save_dir, cluster):
@@ -229,8 +175,8 @@ def save_cluster(save_dir, cluster):
         cluster (Cluster): Cluster object
 
     """
-    with open(os.path.join(save_dir, 'cluster'), 'w') as cluster_file:
-        json.dump(vars(cluster), cluster_file)
+    with open(os.path.join(save_dir, 'cluster'), 'wb') as cluster_file:
+        pickle.dump(cluster, cluster_file)
 
 
 def load_cluster(save_dir):
@@ -243,9 +189,8 @@ def load_cluster(save_dir):
         cluster (Cluster): Cluster object
 
     """
-    with open(os.path.join(save_dir, 'cluster'), 'r') as cluster_file:
-        cluster_params = json.load(cluster_file)
-        cluster = Cluster(cluster_params)
+    with open(os.path.join(save_dir, 'cluster'), 'rb') as cluster_file:
+        cluster = pickle.load(cluster_file)
     return cluster
 
 
@@ -276,3 +221,32 @@ def load_hyper_parameters(model_save_dir):
     with open(os.path.join(model_save_dir, 'hyper_parameters'), 'r') as f:
         hyper_parameters = json.load(f)
     return hyper_parameters
+
+
+def save_metrics(model_save_dir, metrics_dict):
+    """Saves the metrics of a certain model.
+
+    Args:
+        model_save_dir (str): Directory where the hyperparameters corresponding to a specific model
+            will be saved
+        metrics_dict (dict): Dictionary containing and training hyperparameters
+
+    """
+    with open(os.path.join(model_save_dir, 'metrics'), 'w') as f:
+        json.dump(metrics_dict, f)
+
+
+def load_metrics(model_save_dir):
+    """Loads the metrics of a certain model.
+
+    Args:
+        model_save_dir (str): Directory where the metrics corresponding to a specific model
+            are stored
+
+    Returns:
+        metrics (dict): Dictionary containing and training metrics
+
+    """
+    with open(os.path.join(model_save_dir, 'metrics'), 'r') as f:
+        metrics_dict = json.load(f)
+    return metrics_dict

@@ -271,6 +271,31 @@ class DTanh(nn.Module):
         return ro_output
 
 
+class SimpleNN(nn.Module):
+
+    def __init__(self, d_dim, x_dim=3, out_dim=2):
+        super(SimpleNN, self).__init__()
+        self.d_dim = d_dim
+        self.x_dim = x_dim
+        self.out_dim = out_dim
+
+        self.model = nn.Sequential(nn.Linear(self.x_dim, self.d_dim),
+                                   nn.ReLU(),
+                                   nn.Linear(self.d_dim, self.d_dim),
+                                   nn.ReLU(),
+                                   nn.Linear(self.d_dim, self.d_dim),
+                                   nn.ReLU(),
+                                   nn.Dropout(p=0.5),
+                                   nn.Linear(self.d_dim, self.d_dim),
+                                   nn.ReLU(),
+                                   nn.Dropout(p=0.5),
+                                   nn.Linear(self.d_dim, self.out_dim))
+
+    def forward(self, x):
+        output = self.model(x)
+        return output
+
+
 def clip_grad(model, max_norm):
     total_norm = 0
     for p in model.parameters():
