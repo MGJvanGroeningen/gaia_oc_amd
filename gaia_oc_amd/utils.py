@@ -1,9 +1,5 @@
-import os
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
-
-from gaia_oc_amd.io import load_sets
 
 
 def projected_coordinates(ra, dec, cluster_ra, cluster_dec, cluster_dist):
@@ -34,41 +30,6 @@ def projected_coordinates(ra, dec, cluster_ra, cluster_dec, cluster_dist):
     x = d * np.sin(ra - ra_c) * np.cos(dec)
     y = d * (np.cos(dec_c) * np.sin(dec) - np.sin(dec_c) * np.cos(dec) * np.cos(ra - ra_c))
     return x, y
-
-
-def property_mean_and_std(data_dir, cluster_names, properties):
-    """Calculates the mean and standard deviation of a list of properties. The mean and standard deviation
-    are taken over the combined sources from the cone searches of the given clusters.
-
-    Args:
-        data_dir (str): Path to the directory containing the data
-        cluster_names (str, list): Names of the clusters for which the sources are combined
-        properties (str, list): List containing the property names
-
-    Returns:
-        mean (float, array): The mean of each property
-        std (float, array): The standard deviation of each property
-
-    """
-    means = []
-    stds = []
-
-    # Store means and standard deviations of the training features for each cluster
-    for cluster_name in tqdm(cluster_names, total=len(cluster_names), desc='Calculating means and stds...'):
-        cluster_dir = os.path.join(data_dir, cluster_name)
-        _, candidates, non_members, _ = load_sets(cluster_dir)
-
-        all_sources = pd.concat((candidates, non_members))[properties].to_numpy()
-        means.append(np.mean(all_sources, axis=0))
-        stds.append(np.std(all_sources, axis=0))
-
-    means = np.array(means)
-    stds = np.array(stds)
-
-    # Calculate the global feature means and standard deviations
-    mean = np.mean(means, axis=0)
-    std = np.sqrt(np.mean(stds ** 2 + (means - mean) ** 2, axis=0))
-    return mean, std
 
 
 def add_columns(dataframes, functions, labels):
