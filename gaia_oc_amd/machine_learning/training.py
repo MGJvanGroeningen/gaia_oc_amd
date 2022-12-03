@@ -7,6 +7,7 @@ from tqdm import tqdm
 from torch.nn.functional import softmax
 
 from gaia_oc_amd.machine_learning.deepsets_zaheer import clip_grad
+from gaia_oc_amd.io import save_hyper_parameters, save_model
 
 
 def calculate_metrics(tp, tn, fp, fn):
@@ -144,6 +145,38 @@ def train_model(model, model_save_dir, train_dataset, val_dataset=None, num_epoc
             else:
                 print(f'Model not loaded. No model exists at {model_parameters_path}')
 
+    training_clusters = train_dataset.dataset.cluster_names
+    if val_dataset is not None:
+        validation_clusters = val_dataset.dataset.cluster_names
+    else:
+        validation_clusters = []
+
+    hyperparameters = {'n_training_clusters': len(training_clusters),
+                       'training_clusters': sorted(training_clusters),
+                       'n_validation_clusters': len(validation_clusters),
+                       'validation_clusters': sorted(validation_clusters),
+                       'validation_fraction': len(validation_clusters) / (len(training_clusters) +
+                                                                          len(validation_clusters)),
+                       'size_support_set': train_dataset.dataset.size_support_set,
+                       'batch_size': train_dataset.batch_size,
+                       'n_pos_duplicates': train_dataset.dataset.n_pos_duplicates,
+                       'neg_pos_ratio': train_dataset.dataset.neg_pos_ratio,
+                       'source_features': train_dataset.dataset.source_feature_names,
+                       'source_feature_means': list(train_dataset.dataset.source_feature_means),
+                       'source_feature_stds': list(train_dataset.dataset.source_feature_stds),
+                       'cluster_features': train_dataset.dataset.cluster_feature_names,
+                       'cluster_feature_means': list(train_dataset.dataset.cluster_feature_means),
+                       'cluster_feature_stds': list(train_dataset.dataset.cluster_feature_stds),
+                       'hidden_size': model.d_dim,
+                       'n_epochs': num_epochs,
+                       'lr': lr,
+                       'l2': l2,
+                       'weight_imbalance': weight_imbalance,
+                       'early_stopping_threshold': early_stopping_threshold,
+                       'seed': train_dataset.dataset.seed}
+
+    save_hyper_parameters(model_save_dir, hyperparameters)
+
     weight_class = torch.FloatTensor([1, weight_imbalance])
     criterion = torch.nn.CrossEntropyLoss(weight=weight_class, reduction='sum')
     optimizer = optim.Adam([{'params': model.parameters()}], lr=lr, weight_decay=l2)
@@ -184,7 +217,7 @@ def train_model(model, model_save_dir, train_dataset, val_dataset=None, num_epoc
 
         # Save the model state if the F1 score is better than any previous epoch
         if f1 > max_f1:
-            torch.save(model.state_dict(), model_parameters_path)
+            save_model(model_save_dir, model)
             epochs_without_improvement = 0
         else:
             epochs_without_improvement += 1
