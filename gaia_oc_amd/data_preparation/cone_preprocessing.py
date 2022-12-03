@@ -1,44 +1,40 @@
+import os
 import numpy as np
+import pandas as pd
+import scipy.interpolate as interpolate
+
 from zero_point import zpt
 
-from gaia_oc_amd.utils import add_columns
+
+def init_spline(df, col_knots, col_coeff):
+    ddff = df[[col_knots, col_coeff]].dropna()
+    return interpolate.BSpline(ddff[col_knots], ddff[col_coeff], 3, extrapolate=False)
 
 
-def danielski_extinction(bp_rp, a0, danielski_parameters):
-    """Calculates the magnitude correction due to interstellar extinction for a source with a given colour.
-    This extinction law is taken from Danielski et al. (2018)
+class Edr3MagUncertainty:
+    def __init__(self, spline_csv):
+        _df = pd.read_csv(spline_csv)
+        splines = dict()
+        splines['g'] = init_spline(_df, 'knots_G', 'coeff_G')
+        splines['bp'] = init_spline(_df, 'knots_BP', 'coeff_BP')
+        splines['rp'] = init_spline(_df, 'knots_RP', 'coeff_RP')
+        self.__splines = splines
+        self.__nobs = {'g': 200, 'bp': 20, 'rp': 20}
 
-    Args:
-        bp_rp (float, array): BP-RP colour of the source
-        a0 (float, array): Extinction coefficient at the Gaia reference wavelength (550 nm)
-        danielski_parameters (float, tuple): Danielski parameters
-
-    Returns:
-        magnitude_correction (float): The correction in magnitude
-
-    """
-    c1, c2, c3, c4, c5, c6, c7 = danielski_parameters
-    k = c1 + c2 * bp_rp + c3 * bp_rp ** 2 + c4 * bp_rp ** 3 + c5 * a0 + c6 * a0 ** 2 + c7 * bp_rp * a0
-    return a0 * k
+    def estimate(self, band, mag, nobs):
+        mag = np.where(mag > 20.95, 20.95, mag)
+        mag = np.where(mag < 4.05, 4.05, mag)
+        return 10 ** (self.__splines[band](mag) - np.log10(np.sqrt(nobs) / np.sqrt(self.__nobs[band])))
 
 
-def gaia_extinctions(bp_rp, a0):
-    """Corrects the magnitude and colour of a set of sources for interstellar extinction.
-
-    Args:
-        bp_rp (float, array): Array of colours
-        a0 (float, array): Extinction at 550 nm, can either be a single value or an array
-
-    """
-    danielski_g_parameters = (0.9761, -0.1704, 0.0086, 0.0011, -0.0438, 0.0013, 0.0099)
-    danielski_bp_parameters = (1.1517, -0.0871, -0.0333, 0.0173, -0.0230, 0.0006, 0.0043)
-    danielski_rp_parameters = (0.6104, -0.0170, -0.0026, -0.0017, -0.0078, 0.00005, 0.0006)
-
-    a_g = danielski_extinction(bp_rp, a0, danielski_g_parameters)
-    a_bp = danielski_extinction(bp_rp, a0, danielski_bp_parameters)
-    a_rp = danielski_extinction(bp_rp, a0, danielski_rp_parameters)
-
-    return a_g, a_bp, a_rp
+def set_magnitude_errors(cone):
+    u = Edr3MagUncertainty(os.path.join(os.path.dirname(__file__), 'LogErrVsMagSpline.csv'))
+    cone['phot_g_mean_mag_error'] = u.estimate('g', cone['phot_g_mean_mag'], cone['phot_g_n_obs'])
+    cone['phot_bp_mean_mag_error'] = u.estimate('bp', cone['phot_bp_mean_mag'], cone['phot_bp_n_obs'])
+    cone['phot_rp_mean_mag_error'] = u.estimate('rp', cone['phot_rp_mean_mag'], cone['phot_rp_n_obs'])
+    cone['bp_rp_error'] = np.sqrt(cone['phot_bp_mean_mag_error']**2 + cone['phot_rp_mean_mag_error']**2)
+    cone['g_rp_error'] = np.sqrt(cone['phot_g_mean_mag_error']**2 + cone['phot_rp_mean_mag_error']**2)
+    return cone
 
 
 def unsplit_sky_positions(sources, coordinate_system='icrs'):
@@ -117,7 +113,7 @@ def bp_rp_error_function():
     return bp_rp_error
 
 
-def cone_preprocessing(cone, a0=0., source_extinction_field=None):
+def cone_preprocessing(cone):
     """Applies the following preprocessing steps on the cone search data.
      - Drop sources without colours
      - Correct the parallax of the cone sources for the parallax zero-point
@@ -128,8 +124,6 @@ def cone_preprocessing(cone, a0=0., source_extinction_field=None):
 
     Args:
         cone (Dataframe): Dataframe containing the data of the sources in the cone search.
-        a0 (float, array): Extinction at 550 nm, can either be a single value or an array
-        source_extinction_field (str): Optional extinction field if it is available per source in the cone data
 
     Returns:
         cone (Dataframe): Dataframe containing the (preprocessed) data of the sources in the cone search.
@@ -146,20 +140,12 @@ def cone_preprocessing(cone, a0=0., source_extinction_field=None):
     zpt_is_not_nan = ~np.isnan(plx_zpts)
     cone.loc[zpt_is_not_nan, 'parallax'] -= plx_zpts[zpt_is_not_nan]
 
-    # Correct the magnitude and colour of cone sources for interstellar extinction
-    if source_extinction_field is not None:
-        a0 = cone[source_extinction_field]
-    a_g, a_bp, a_rp = gaia_extinctions(cone['bp_rp'], a0)
-    cone['phot_g_mean_mag'] -= a_g
-    cone['bp_rp'] -= a_bp - a_rp
+    # Set magnitude errors based on the expected error for a certain magnitude and number of observations.
+    cone = set_magnitude_errors(cone)
 
     # Adjust the coordinates to prevent a split in the sky position plot
     unsplit_sky_positions(cone, coordinate_system='galactic')
     unsplit_sky_positions(cone, coordinate_system='icrs')
-
-    # Calculate magnitude and colour errors of the cone sources from their flux data
-    add_columns([cone], [phot_g_mean_mag_error_function(), bp_rp_error_function()],
-                ['phot_g_mean_mag_error', 'bp_rp_error'])
 
     # Set the default membership probability to zero
     cone['PMemb'] = 0

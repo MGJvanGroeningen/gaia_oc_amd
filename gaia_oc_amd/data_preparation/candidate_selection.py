@@ -17,7 +17,7 @@ def pm_candidate_condition(cluster_pmra, cluster_pmdec, pm_delta, source_error_w
         can_condition (function): Candidate selection function
     """
     pm_feature = pm_feature_function(cluster_pmra, cluster_pmdec, pm_delta, use_source_errors=True,
-                                     source_error_weight=source_error_weight)
+                                     source_error_weight=source_error_weight, scale_features=True)
 
     def can_condition(row):
         candidate = False
@@ -41,18 +41,18 @@ def plx_candidate_condition(cluster_parallax, plx_delta_plus, plx_delta_min, sou
         can_condition (function): Candidate selection function
     """
     plx_feature = plx_feature_function(cluster_parallax, plx_delta_plus, plx_delta_min, use_source_errors=True,
-                                       source_error_weight=source_error_weight)
+                                       source_error_weight=source_error_weight, scale_features=True)
 
     def can_condition(row):
         candidate = False
-        if plx_feature(row) < 1.0:
+        if np.abs(plx_feature(row)) < 1.0:
             candidate = True
         return candidate
 
     return can_condition
 
 
-def isochrone_candidate_condition(isochrone, c_delta=0.5, g_delta=1.5, source_error_weight=3.0):
+def isochrone_candidate_condition(isochrone, c_delta=0.5, g_delta=1.5, colour='bp_rp', source_error_weight=3.0):
     """Returns a function that can be applied on the cone dataframe to select candidates based on their
     magnitude and colour.
 
@@ -60,13 +60,16 @@ def isochrone_candidate_condition(isochrone, c_delta=0.5, g_delta=1.5, source_er
         isochrone (Dataframe): Dataframe containing the colour and magnitude of the isochrone.
         c_delta (float): Maximum colour separation
         g_delta (float): Maximum magnitude separation
+        colour (str): Which colour field to use ('bp_rp', 'g_rp')
         source_error_weight (float): How many source errors are added to the maximum separations.
 
     Returns:
         can_condition (function): Candidate selection function
     """
-    isochrone_features = isochrone_features_function(isochrone, c_delta, g_delta, use_source_errors=True,
-                                                     source_error_weight=source_error_weight)
+    isochrone_features = isochrone_features_function(isochrone, c_delta, g_delta, colour=colour,
+                                                     use_source_errors=True,
+                                                     source_error_weight=source_error_weight,
+                                                     scale_features=True)
 
     def can_condition(row):
         candidate = False
@@ -91,6 +94,7 @@ def candidate_conditions(cluster):
                                           cluster.source_error_weight),
                   pm_candidate_condition(cluster.pmra, cluster.pmdec, cluster.delta_pm, cluster.source_error_weight),
                   isochrone_candidate_condition(cluster.isochrone, cluster.delta_c, cluster.delta_g,
+                                                cluster.isochrone_colour,
                                                 cluster.source_error_weight)]
 
     def can_condition(row):

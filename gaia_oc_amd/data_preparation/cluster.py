@@ -21,8 +21,8 @@ def most_likely_value(means, errors):
     return np.sum(means / errors ** 2) / np.sum(1 / errors ** 2)
 
 
-def isochrone_deltas(members, isochrone, delta_c0=0.5, delta_g0=1.5, member_fraction=0.90, alpha=0.95, c_margin=0.25,
-                     g_margin=0.75):
+def isochrone_deltas(members, isochrone, colour='g_rp', delta_c0=0.3, delta_g0=2.4, member_fraction=0.90, alpha=0.95,
+                     c_margin=0.1, g_margin=0.8):
     """Calculates the maximum separation in the colour and magnitude dimensions. This is done by iteratively decreasing
     some initial delta values until only a certain fraction of the members is selected by the
     isochrone condition as candidate. Some constant margins can be added to prevent the delta from being too strict.
@@ -30,6 +30,7 @@ def isochrone_deltas(members, isochrone, delta_c0=0.5, delta_g0=1.5, member_frac
     Args:
         members (pd.Dataframe): Dataframe containing members of the open cluster
         isochrone (Dataframe): Dataframe containing the colour and magnitude of the isochrone.
+        colour (str): Which colour field to use ('bp_rp', 'g_rp')
         delta_c0 (float): Initial value for the colour delta
         delta_g0 (float): Initial value for the magnitude delta
         member_fraction (float): Fraction of the members to be selected as candidate by the isochrone condition
@@ -44,7 +45,7 @@ def isochrone_deltas(members, isochrone, delta_c0=0.5, delta_g0=1.5, member_frac
     """
     n_members = len(members)
 
-    iso_cond = isochrone_candidate_condition(isochrone, delta_c0, delta_g0)
+    iso_cond = isochrone_candidate_condition(isochrone, delta_c0, delta_g0, colour=colour)
     member_candidate_labels = members.apply(iso_cond, axis=1).to_numpy()
 
     delta_c_member_fraction = delta_c0
@@ -54,7 +55,8 @@ def isochrone_deltas(members, isochrone, delta_c0=0.5, delta_g0=1.5, member_frac
     while sum(member_candidate_labels) > member_fraction * n_members:
         delta_c_member_fraction *= alpha
         delta_g_member_fraction *= alpha
-        iso_cond = isochrone_candidate_condition(isochrone, delta_c_member_fraction, delta_g_member_fraction)
+        iso_cond = isochrone_candidate_condition(isochrone, delta_c_member_fraction, delta_g_member_fraction,
+                                                 colour=colour)
         member_candidate_labels = members.apply(iso_cond, axis=1).to_numpy()
 
     delta_c = delta_c_member_fraction / alpha + c_margin
@@ -138,10 +140,11 @@ class Cluster:
         self.delta_g = None
 
         self.isochrone = None
+        self.isochrone_colour = 'g_rp'
 
         self.source_error_weight = None
 
-        self.training_members_label = None
+        self.train_members_label = None
         self.comparison_members_label = None
 
         if cluster_parameters is not None:
@@ -157,6 +160,12 @@ class Cluster:
         gal_coord = SkyCoord(self.ra, self.dec, frame='icrs', unit='deg').galactic
         self.l = gal_coord.l.value
         self.b = gal_coord.b.value
+
+    def set_train_members_label(self, label):
+        self.train_members_label = label
+
+    def set_comparison_members_label(self, label):
+        self.comparison_members_label = label
 
     def update_astrometric_parameters(self, members):
         """Function that updates the astrometric parameters of the cluster based on a set of its members.
@@ -182,15 +191,17 @@ class Cluster:
         self.pmdec_error = np.std(members['pmdec'])
         self.parallax_error = np.std(members['parallax'])
 
-    def set_candidate_selection_parameters(self, members, isochrone, source_error_weight=3., pm_error_weight=3.,
-                                           r_max_margin=15., zpt_error=0.015, delta_c0=0.5, delta_g0=1.5, c_margin=0.25,
-                                           g_margin=0.75, member_fraction=0.90, alpha=0.95):
+    def set_candidate_selection_parameters(self, members, isochrone, colour='g_rp', source_error_weight=3.,
+                                           pm_error_weight=3., r_max_margin=15., zpt_error=0.015, delta_c0=0.3,
+                                           delta_g0=2.4, c_margin=0.1, g_margin=0.8, member_fraction=0.90,
+                                           alpha=0.95):
         """Function that sets the parameters which are used in the candidate selection. These include the
         maximum separation delta which define the zero-error boundaries between candidates and non-members.
 
         Args:
             members (pd.Dataframe): Dataframe containing members of the open cluster
             isochrone (Dataframe): Dataframe containing the colour and magnitude of the isochrone.
+            colour (str): Which colour field to use ('bp_rp', 'g_rp')
             source_error_weight (float): The number of sigma a candidate may deviate from zero-error boundary
             pm_error_weight (float): The weight of the standard deviation in the cluster member
                 proper motion in the definition of the zero-error boundary
@@ -205,6 +216,7 @@ class Cluster:
 
         """
         self.isochrone = isochrone
+        self.isochrone_colour = colour
         self.source_error_weight = source_error_weight
 
         # Uncertainties in the mean astrometric variables
@@ -218,6 +230,7 @@ class Cluster:
         self.delta_plx_plus, self.delta_plx_min = plx_deltas(members, self.parallax, self.ra, self.dec, self.dist,
                                                              mean_plx_error, zpt_error, r_max_margin=r_max_margin,
                                                              member_fraction=member_fraction, alpha=alpha)
-        self.delta_c, self.delta_g = isochrone_deltas(members, isochrone, delta_c0=delta_c0, delta_g0=delta_g0,
+        self.delta_c, self.delta_g = isochrone_deltas(members, isochrone, colour=colour,
+                                                      delta_c0=delta_c0, delta_g0=delta_g0,
                                                       c_margin=c_margin, g_margin=g_margin,
                                                       member_fraction=member_fraction, alpha=alpha)
