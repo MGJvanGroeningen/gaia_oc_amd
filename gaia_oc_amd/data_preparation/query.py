@@ -1,22 +1,21 @@
 import os
-from urllib.parse import urljoin
-
 import numpy as np
 import requests
 from astroquery.gaia import Gaia
 from astroquery.vizier import Vizier
 from lxml import etree
 from tqdm import tqdm
+from urllib.parse import urljoin
 
 
-def query_isochrone(save_dir, min_log_age=6.00, max_log_age=9.99, dlog_age=0.01, metal_frac=0.0152):
+def query_isochrone(save_path, log_age_min=6.00, log_age_max=9.99, log_age_step=0.01, metal_frac=0.0152):
     """Downloads isochrone data for a range of isochrone ages and a fixed metallicity/metal fraction.
 
     Args:
-        save_dir (str): Path to directory where the isochrone data will be stored.
-        min_log_age (float): Minimum log(age) of the isochrone
-        max_log_age (float): Maximum log(age) of the isochrone
-        dlog_age (float): Step in log(age) of the isochrone
+        save_path (str): Path to where the isochrone data will be stored.
+        log_age_min (float): Minimum log(age) of the isochrone
+        log_age_max (float): Maximum log(age) of the isochrone
+        log_age_step (float): Step in log(age) of the isochrone
         metal_frac (float): Metal fraction (Z) of the isochrones
 
     """
@@ -42,9 +41,9 @@ def query_isochrone(save_dir, min_log_age=6.00, max_log_age=9.99, dlog_age=0.01,
                    'kind_LPV': '3',
                    'imf_file': 'tab_imf/imf_kroupa_orig.dat',
                    'isoc_isagelog': '1',
-                   'isoc_lagelow': f'{min_log_age}',
-                   'isoc_lageupp': f'{max_log_age}',
-                   'isoc_dlage': f'{dlog_age}',
+                   'isoc_lagelow': f'{log_age_min}',
+                   'isoc_lageupp': f'{log_age_max}',
+                   'isoc_dlage': f'{log_age_step}',
                    'isoc_ismetlog': '0',
                    'isoc_zlow': f'{metal_frac}',
                    'isoc_zupp': '0.03',
@@ -82,34 +81,36 @@ def query_isochrone(save_dir, min_log_age=6.00, max_log_age=9.99, dlog_age=0.01,
     block_size = 2 ** 16
     data_size = int(r.headers['content-length'])
 
-    with open(os.path.join(save_dir, 'isochrones.dat'), 'wb') as f:
+    with open(save_path, 'wb') as f:
         for block in tqdm(r.iter_content(block_size), total=data_size // block_size + 1,
                           desc='Downloading isochrones...'):
             f.write(block)
     r.close()
 
 
-def query_catalog(catalog, columns, save_path, cluster_column=None, id_column=None, prob_column=None, row_limit=-1):
+
+
+def query_vizier_catalog(catalog, save_path='.', columns=None, new_column_names=None, row_limit=-1):
     """Downloads data from a given Vizier catalogue. Can be used for the members and cluster parameters.
 
     Args:
         catalog (str): Identifier of the Vizier catalog
-        columns (str, list): List of columns to be downloaded from the catalog
         save_path (str): Path where the catalog data is saved
+        columns (str, list): List of columns to be downloaded from the catalog
+        new_column_names (dict): Dictionary for renaming the dataframe columns in the format
+            {'old_name': 'new_name', etc...}
         row_limit (int): Maximum number of rows to be downloaded from the catalog
-        cluster_column (str): Name of the cluster name column in the (member) catalog data
-        id_column (str): Name of the source identity column in the (member) catalog data
-        prob_column (str): Name of the membership probability column in the (member) catalog data
 
     """
+    if columns is None:
+        columns = ["*"]
     query = Vizier(catalog=catalog, columns=columns, row_limit=row_limit).query_constraints()[0]
-    data = query.to_pandas()
-    data = data.rename(columns={cluster_column: 'cluster', id_column: 'source_id', prob_column: 'PMemb'})
+    data = query.to_pandas().rename(columns=new_column_names)
     data.to_csv(save_path)
 
 
-def cone_search(cluster, save_dir, gaia_credentials_path, table="gaiaedr3.gaia_source", query_columns=None,
-                cone_radius=50., pm_sigmas=7., plx_sigmas=10.):
+def cone_search(cluster, save_dir, gaia_credentials_path, table="gaiadr3.gaia_source", query_columns=None,
+                cone_radius=50., pm_sigmas=10., plx_sigmas=10.):
     """Performs a cone search, centered on a specific cluster, on the data in the Gaia archive
     This results in a set of sources that includes the members, candidate members and informative non-members.
 
@@ -117,7 +118,7 @@ def cone_search(cluster, save_dir, gaia_credentials_path, table="gaiaedr3.gaia_s
         cluster (Cluster): A Cluster object
         save_dir (str): Path to the directory where the cone search data will be saved
         gaia_credentials_path (str): Path to a file that contains a username and password
-            to login to the Gaia archive
+            to log in to the Gaia archive
         table (str): The data table from which to download the cone sources
         query_columns (str, list): Which columns to download
         cone_radius (float): The projected radius of the cone search in parsec
@@ -142,7 +143,7 @@ def cone_search(cluster, save_dir, gaia_credentials_path, table="gaiaedr3.gaia_s
     radius = cone_radius / cluster.dist * 180 / np.pi
     pmra, pmdec = cluster.pmra, cluster.pmdec
     pmra_e, pmdec_e = cluster.pmra_error, cluster.pmdec_error
-    pm_e = np.sqrt(pmra_e**2 + pmdec_e**2)
+    pm_e = np.sqrt((pmra_e**2 + pmdec_e**2) / 2)
     plx, plx_e = cluster.parallax, cluster.parallax_error
 
     if query_columns is None:
@@ -153,8 +154,11 @@ def cone_search(cluster, save_dir, gaia_credentials_path, table="gaiaedr3.gaia_s
                    'phot_g_mean_flux', 'phot_bp_mean_flux', 'phot_rp_mean_flux',
                    'phot_g_mean_flux_error', 'phot_bp_mean_flux_error', 'phot_rp_mean_flux_error',
                    'source_id',
-                   'phot_g_mean_mag', 'bp_rp',
-                   'l', 'b', 'nu_eff_used_in_astrometry', 'pseudocolour', 'ecl_lat', 'astrometric_params_solved']
+                   'phot_g_mean_mag', 'phot_bp_mean_mag', 'phot_rp_mean_mag',
+                   'bp_rp', 'g_rp',
+                   'l', 'b',
+                   'nu_eff_used_in_astrometry', 'pseudocolour', 'ecl_lat', 'astrometric_params_solved',
+                   'phot_g_n_obs', 'phot_bp_n_obs', 'phot_rp_n_obs']
     else:
         columns = query_columns
     columns = ','.join(map(str, columns))
