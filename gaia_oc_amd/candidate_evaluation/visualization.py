@@ -395,14 +395,16 @@ def plot_zero_error_boundaries(ax, x, y, cluster):
                           x_max, colors='red', linestyles='dashed', linewidths=1.5, zorder=4,
                           label='zero-error boundary')
             elif y == 'phot_g_mean_mag' and cluster.isochrone is not None:
-                xs = np.linspace(cluster.isochrone['bp_rp'].min() - 1.0,
-                                 cluster.isochrone['bp_rp'].max() + 1.0, 50)
+                xs = np.linspace(cluster.isochrone[cluster.isochrone_colour].min() - 1.0,
+                                 cluster.isochrone[cluster.isochrone_colour].max() + 1.0, 50)
                 ys = np.linspace(cluster.isochrone['phot_g_mean_mag'].min() - 2.0,
                                  cluster.isochrone['phot_g_mean_mag'].max() + 2.0, 200)
 
                 xx, yy = np.meshgrid(xs, ys)
-                grid_stars = pd.DataFrame.from_dict({'bp_rp': xx.flatten(), 'phot_g_mean_mag': yy.flatten()})
-                f_iso_f = isochrone_features_function(cluster.isochrone, cluster.delta_c, cluster.delta_g)
+                grid_stars = pd.DataFrame.from_dict({cluster.isochrone_colour: xx.flatten(), 
+                                                     'phot_g_mean_mag': yy.flatten()})
+                f_iso_f = isochrone_features_function(cluster.isochrone, cluster.delta_c, cluster.delta_g,
+                                                      colour=cluster.isochrone_colour, scale_features=True)
                 zz = np.linalg.norm(np.stack(grid_stars.apply(f_iso_f, axis=1).to_numpy()), axis=1).reshape(200, 50)
                 c = ax.contour(xx, yy, zz, levels=[1.0], colors='red', linestyles='dashed', linewidths=1.5, zorder=4)
                 c.collections[0].set_label('zero-error boundary')
@@ -425,18 +427,19 @@ def plot_features(ax, x, y, source, cluster):
                 x_min, x_max = ax.get_xlim()
                 ax.hlines(cluster.parallax, x_min, x_max, colors='black', linestyles='dashed', linewidths=1.5, zorder=4,
                           label='mean parallax')
-            if x == 'bp_rp' and cluster.isochrone is not None:
-                f_iso_f = isochrone_features_function(cluster.isochrone, cluster.delta_c, cluster.delta_g)
+            if x == cluster.isochrone_colour and cluster.isochrone is not None:
+                f_iso_f = isochrone_features_function(cluster.isochrone, cluster.delta_c, cluster.delta_g,
+                                                      colour=cluster.isochrone_colour)
                 vector_to_isochrone = source.apply(f_iso_f, axis=1).to_numpy()[0]
                 ax.annotate("", xy=(source[x],
                                     source[y]),
                             xytext=(source[x],
-                                    source[y] + vector_to_isochrone[1] * cluster.delta_g),
+                                    source[y] + vector_to_isochrone[1]),
                             arrowprops=dict(arrowstyle="->", linewidth=1, color='black', mutation_scale=15))
                 ax.annotate("", xy=(source[x],
-                                    source[y] + vector_to_isochrone[1] * cluster.delta_g),
-                            xytext=(source[x] + vector_to_isochrone[0] * cluster.delta_c,
-                                    source[y] + vector_to_isochrone[1] * cluster.delta_g),
+                                    source[y] + vector_to_isochrone[1]),
+                            xytext=(source[x] + vector_to_isochrone[0],
+                                    source[y] + vector_to_isochrone[1]),
                             arrowprops=dict(arrowstyle="->", linewidth=1, color='black', mutation_scale=15))
             ax.scatter(source[x], source[y], marker='*', s=100.0, c='red', rasterized=True, zorder=4)
         else:
@@ -446,29 +449,30 @@ def plot_features(ax, x, y, source, cluster):
         raise TypeError('A Cluster() object needs to be supplied to show features.')
 
 
-def plot_sources_limits(sources):
+def plot_sources_limits(sources, colour):
     """Determines plot axis limits by taking the maximum and minimum values of a set of sources
 
     Args:
         sources (Dataframe): Dataframe containing sources
+        colour (str): Which colour field to use ('bp_rp', 'g_rp')
 
     Returns:
         limits (dict): Dictionary containing lists of upper and lower limits for the fields
-            ('l', 'b', 'pmra', 'pmdec', 'parallax', 'phot_g_mean_mag', 'bp_rp')
+            ('l', 'b', 'pmra', 'pmdec', 'parallax', 'phot_g_mean_mag', colour)
 
     """
-    plot_fields = ['l', 'b', 'pmra', 'pmdec', 'parallax', 'phot_g_mean_mag', 'bp_rp']
+    plot_fields = ['l', 'b', 'pmra', 'pmdec', 'parallax', 'phot_g_mean_mag', colour]
     minima = sources[plot_fields].min()
     maxima = sources[plot_fields].max()
 
     padding = {field: 0.05 * (maxima[field] - minima[field]) for field in plot_fields}
     limits = {field: [minima[field] - padding[field], maxima[field] + padding[field]] for field in plot_fields}
-    limits['bp_rp'][0] = max(-1, limits['bp_rp'][0])
-    limits['bp_rp'][1] = min(4, limits['bp_rp'][1])
+    limits[colour][0] = max(-1, limits[colour][0])
+    limits[colour][1] = min(2.5, limits[colour][1])
     return limits
 
 
-def plot_sources(members, save_file='members.png', comparison=None, candidates=None, field_sources=None,
+def plot_sources(members, save_file='members.png', colour='g_rp', comparison=None, candidates=None, field_sources=None,
                  plot_type='members', members_label='members', comparison_label='comparison', title='Cluster',
                  limits=None, show_features_source_id=None, show_isochrone=False, show_boundaries=False, cluster=None,
                  fig_size=(16., 16.), title_size=30., axis_label_size=20., tick_label_size=18., legend_label_size=14.,
@@ -479,6 +483,7 @@ def plot_sources(members, save_file='members.png', comparison=None, candidates=N
     Args:
         members (Dataframe): Dataframe containing members
         save_file (str): Path where the plot is saved
+        colour (str): Which colour field to use ('bp_rp', 'g_rp')
         comparison (Dataframe): Another dataframe containing members
         candidates (Dataframe): Dataframe containing candidates
         field_sources (Dataframe): Dataframe containing field_sources
@@ -487,7 +492,7 @@ def plot_sources(members, save_file='members.png', comparison=None, candidates=N
         comparison_label (str): Label for the comparison members
         title (str): Plot title
         limits (dict): Optional dictionary containing lists of upper and lower limits for the fields
-            ('l', 'b', 'pmra', 'pmdec', 'parallax', 'phot_g_mean_mag', 'bp_rp')
+            ('l', 'b', 'pmra', 'pmdec', 'parallax', 'phot_g_mean_mag', cluster.isochrone_colour)
         show_features_source_id (int): Identity of a source for which to display its features with vectors
         show_isochrone (bool): Whether to plot the isochrone
         show_boundaries (bool): Whether to show zero-error boundaries
@@ -501,8 +506,15 @@ def plot_sources(members, save_file='members.png', comparison=None, candidates=N
         save (bool): Whether to save the plot
 
     """
-    x_fields = ['l', 'phot_g_mean_mag', 'pmra', 'bp_rp']
+    x_fields = ['l', 'phot_g_mean_mag', 'pmra', colour]
     y_fields = ['b', 'parallax', 'pmdec', 'phot_g_mean_mag']
+
+    if colour == 'bp_rp':
+        colour_label = r'$G_{BP} - G_{RP}$ [mag]'
+    elif colour == 'g_rp':
+        colour_label = r'$G - G_{RP}$ [mag]'
+    else:
+        colour_label = r'$C$ [mag]'
 
     labels = {'l': r'$l$ [deg]',
               'b': r'$b$ [deg]',
@@ -510,7 +522,7 @@ def plot_sources(members, save_file='members.png', comparison=None, candidates=N
               'pmdec': r'$\mu_{\delta}$ [mas/yr]',
               'parallax': r'$\varpi$ [mas]',
               'phot_g_mean_mag': r'$G$ [mag]',
-              'bp_rp': r'$G_{BP} - G_{RP}$ [mag]'}
+              colour: colour_label}
 
     if show_features_source_id is not None:
         all_sources = members
@@ -563,13 +575,17 @@ def plot_sources(members, save_file='members.png', comparison=None, candidates=N
 
         if y == 'phot_g_mean_mag':
             if show_isochrone and cluster is not None and cluster.isochrone is not None:
-                ax.plot(cluster.isochrone['bp_rp'], cluster.isochrone['phot_g_mean_mag'], label='isochrone', zorder=1)
+                ax.plot(cluster.isochrone[colour], cluster.isochrone['phot_g_mean_mag'],
+                        label='isochrone', zorder=1)
             ax.invert_yaxis()
+            legend_loc = 'best'
+        else:
+            legend_loc = 'upper left'
 
         ax.set_xlabel(labels[x], fontsize=axis_label_size)
         ax.set_ylabel(labels[y], fontsize=axis_label_size)
         ax.tick_params(labelsize=tick_label_size)
-        ax.legend(fontsize=legend_label_size)
+        ax.legend(fontsize=legend_label_size, loc=legend_loc)
 
     fig.suptitle(title, fontsize=title_size)
     if save:

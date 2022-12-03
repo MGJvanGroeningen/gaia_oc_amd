@@ -1,9 +1,12 @@
+import os
 import numpy as np
 from tqdm import tqdm
 from torch.nn.functional import softmax
 
+from gaia_oc_amd.data_preparation.cluster import Cluster
 from gaia_oc_amd.data_preparation.datasets import deep_sets_eval_dataset
 from gaia_oc_amd.data_preparation.features import add_features
+from gaia_oc_amd.io import load_model, load_hyper_parameters, load_cluster, load_sets
 
 
 def means_and_covariance_matrix(sources, properties):
@@ -109,53 +112,86 @@ def predict_membership(dataset, model, batch_size=1024):
     return predictions
 
 
-def calculate_probabilities(eval_sources, model, cluster, members, training_features, training_feature_means,
-                            training_feature_stds, size_support_set=5, n_samples=40, seed=42):
+def calculate_candidate_probs(cluster_dir, model_dir, n_samples=40, fast_mode=True, seed=42):
     """Returns the membership probabilities of a set of sources, based on the model predictions
     for a number of sampled properties of these sources.
 
     Args:
-        eval_sources (Dataframe): Dataframe containing sources for which we want to determine
-            the membership probability
-        model (nn.Module): Deep sets model
-        cluster (Cluster): Cluster object
-        members (Dataframe): Dataframe containing member sources (used for the support sets)
-        training_features (str, list): Labels of the training features
-        training_feature_means (float, array): Mean values of the training features (normalization)
-        training_feature_stds (float, array): Standard deviation of the training features (normalization)
-        size_support_set (int): Number of members in the support set
+        cluster_dir (str): Directory where the cluster data is stored
+        model_dir (str): Directory where the model data is stored
         n_samples (int): The number of samples
+        fast_mode (bool): If True, use a faster but more memory intensive method, which might crash for
+            many (>~10^5) sources.
         seed (int): The random seed, which determines the samples
 
     Returns:
         probabilities (float, array): Array of membership probabilities for the to-be-evaluated sources
 
     """
+    # Load the necessary datasets (i.e. cluster, sources)
+    cluster_params = load_cluster(cluster_dir)
+    cluster = Cluster(cluster_params)
+    members, candidates, _, _ = load_sets(cluster_dir)
+
+    # Load the (trained) model
+    model = load_model(model_dir)
     model.eval()
-    np.random.seed(seed)
+
+    # Load the dataset hyperparameters
+    hyper_parameters = load_hyper_parameters(model_dir)
+
+    source_feature_names = hyper_parameters['source_features']
+    source_feature_means = np.array(hyper_parameters['source_feature_means'])
+    source_feature_stds = np.array(hyper_parameters['source_feature_stds'])
+
+    cluster_feature_names = hyper_parameters['cluster_features']
+    cluster_feature_means = np.array(hyper_parameters['cluster_feature_means'])
+    cluster_feature_stds = np.array(hyper_parameters['cluster_feature_stds'])
+
+    size_support_set = hyper_parameters['size_support_set']
 
     # Sample astrometric and photometric properties of the sources
-    sample_properties = ['parallax', 'pmra', 'pmdec', 'phot_g_mean_mag', 'bp_rp']
-    samples = sample_sources(eval_sources, sample_properties=sample_properties, n_samples=n_samples)
+    np.random.seed(seed)
+    sample_properties = ['parallax', 'pmra', 'pmdec', 'phot_g_mean_mag', cluster.isochrone_colour]
+    samples = sample_sources(candidates, sample_properties=sample_properties, n_samples=n_samples)
+    candidates_sample_predictions = np.zeros((n_samples, len(candidates)))
 
-    eval_sources_sample_predictions = np.zeros((n_samples, len(eval_sources)))
+    update_f_pm = 'f_pm' in source_feature_names
+    update_f_plx = 'f_plx' in source_feature_names
+    update_f_iso = 'f_c' in source_feature_names or 'f_g' in source_feature_names
+
+    # Determine the cluster features if they were used for training
+    if cluster_feature_names is not None:
+        cluster_features = np.array([getattr(cluster, feature) for feature in cluster_feature_names])
+        cluster_features = (cluster_features - cluster_feature_means) / cluster_feature_stds
+    else:
+        cluster_features = None
+
+    # Normalize member source features which are used in the support set
+    members = (members[source_feature_names].to_numpy() - source_feature_means) / source_feature_stds
 
     for sample_idx in tqdm(range(n_samples), total=n_samples, desc='Evaluating candidate samples'):
         # Create a copy of the sources to be evaluated and replace the original properties with sampled properties
-        eval_sources_sample = eval_sources.copy()
-        eval_sources_sample[sample_properties] = samples[sample_idx]
+        candidates_sample = candidates.copy()
+        candidates_sample[sample_properties] = samples[sample_idx]
 
         # Update the feature values for each sample
-        add_features(eval_sources_sample, cluster, radius_feature=False)
+        add_features(candidates_sample, cluster, radius_feature=False, proper_motion_feature=update_f_pm,
+                     parallax_feature=update_f_plx, isochrone_features=update_f_iso, fast_mode=fast_mode)
+
+        # Normalization
+        candidates_sample = (candidates_sample[source_feature_names].to_numpy() -
+                             source_feature_means) / source_feature_stds
 
         # Create a normalized deep sets dataset for to-be-evaluated sources
-        eval_sources_sample_dataset = deep_sets_eval_dataset(eval_sources_sample, members,
-                                                             training_features, training_feature_means,
-                                                             training_feature_stds, size_support_set)
+        candidates_sample_dataset = deep_sets_eval_dataset(candidates_sample, members,
+                                                           global_features=cluster_features,
+                                                           size_support_set=size_support_set)
 
         # Predict membership based on the sampled properties
-        eval_sources_sample_predictions[sample_idx] = predict_membership(eval_sources_sample_dataset, model)
+        candidates_sample_predictions[sample_idx] = predict_membership(candidates_sample_dataset, model)
 
-    probabilities = np.mean(eval_sources_sample_predictions, axis=0)
+    probabilities = np.mean(candidates_sample_predictions, axis=0)
 
-    return probabilities
+    candidates['PMemb'] = probabilities
+    candidates.to_csv(os.path.join(cluster_dir, 'candidates.csv'))
