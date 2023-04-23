@@ -15,8 +15,7 @@ def candidate_and_non_member_set(cone, cluster):
         non_members (Dataframe): Dataframe containing non_member sources
 
     """
-    conditions = candidate_conditions(cluster)
-    candidate_indices = cone.apply(conditions, axis=1)
+    candidate_indices = candidate_conditions(cone, cluster)
 
     candidates = cone[candidate_indices].copy().reset_index(drop=True)
     non_members = cone[~candidate_indices].copy().reset_index(drop=True)

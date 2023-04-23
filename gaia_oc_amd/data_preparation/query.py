@@ -88,9 +88,7 @@ def query_isochrone(save_path, log_age_min=6.00, log_age_max=9.99, log_age_step=
     r.close()
 
 
-
-
-def query_vizier_catalog(catalog, save_path='.', columns=None, new_column_names=None, row_limit=-1):
+def query_vizier_catalog(catalog, save_path='./catalogue.csv', columns=None, new_column_names=None, row_limit=-1):
     """Downloads data from a given Vizier catalogue. Can be used for the members and cluster parameters.
 
     Args:
@@ -105,12 +103,14 @@ def query_vizier_catalog(catalog, save_path='.', columns=None, new_column_names=
     if columns is None:
         columns = ["*"]
     query = Vizier(catalog=catalog, columns=columns, row_limit=row_limit).query_constraints()[0]
-    data = query.to_pandas().rename(columns=new_column_names)
+    data = query.to_pandas()
+    if new_column_names is not None:
+        data = data.rename(columns=new_column_names)
     data.to_csv(save_path)
 
 
 def cone_search(cluster, save_dir, gaia_credentials_path, table="gaiadr3.gaia_source", query_columns=None,
-                cone_radius=50., pm_sigmas=10., plx_sigmas=10.):
+                output_format='votable', cone_radius=50., pm_sigmas=10., plx_sigmas=10., overwrite_cone=False):
     """Performs a cone search, centered on a specific cluster, on the data in the Gaia archive
     This results in a set of sources that includes the members, candidate members and informative non-members.
 
@@ -121,71 +121,78 @@ def cone_search(cluster, save_dir, gaia_credentials_path, table="gaiadr3.gaia_so
             to log in to the Gaia archive
         table (str): The data table from which to download the cone sources
         query_columns (str, list): Which columns to download
+        output_format (str): File format of the output file, use 'votable' (default) or 'csv'.
         cone_radius (float): The projected radius of the cone search in parsec
         pm_sigmas (float): How many standard deviations (of the cluster members) in proper motion
             cone sources may deviate from the mean
         plx_sigmas (float): How many standard deviations (of the cluster members) in parallax
             cone sources may deviate from the mean
+        overwrite_cone (bool): Whether to overwrite the current cone data file if it already exists
     """
-    Gaia.login(credentials_file=gaia_credentials_path)
-
-    if not os.path.exists(save_dir):
-        os.mkdir(save_dir)
-
     cluster_dir = os.path.join(save_dir, cluster.name)
-    if not os.path.exists(cluster_dir):
-        os.mkdir(cluster_dir)
-    cone_file = os.path.join(cluster_dir, 'cone.vot.gz')
 
-    ra, dec = cluster.ra, cluster.dec
-    if ra < 0:
-        ra += 360
-    radius = cone_radius / cluster.dist * 180 / np.pi
-    pmra, pmdec = cluster.pmra, cluster.pmdec
-    pmra_e, pmdec_e = cluster.pmra_error, cluster.pmdec_error
-    pm_e = np.sqrt((pmra_e**2 + pmdec_e**2) / 2)
-    plx, plx_e = cluster.parallax, cluster.parallax_error
-
-    if query_columns is None:
-        # Default columns
-        columns = ['ra', 'dec', 'parallax', 'pmra', 'pmdec',
-                   'parallax_error', 'pmra_error', 'pmdec_error',
-                   'parallax_pmra_corr', 'parallax_pmdec_corr', 'pmra_pmdec_corr',
-                   'phot_g_mean_flux', 'phot_bp_mean_flux', 'phot_rp_mean_flux',
-                   'phot_g_mean_flux_error', 'phot_bp_mean_flux_error', 'phot_rp_mean_flux_error',
-                   'source_id',
-                   'phot_g_mean_mag', 'phot_bp_mean_mag', 'phot_rp_mean_mag',
-                   'bp_rp', 'g_rp',
-                   'l', 'b',
-                   'nu_eff_used_in_astrometry', 'pseudocolour', 'ecl_lat', 'astrometric_params_solved',
-                   'phot_g_n_obs', 'phot_bp_n_obs', 'phot_rp_n_obs']
+    if output_format == 'votable':
+        cone_file = os.path.join(cluster_dir, 'cone.vot.gz')
+    elif output_format == 'csv':
+        cone_file = os.path.join(cluster_dir, 'cone.csv')
     else:
-        columns = query_columns
-    columns = ','.join(map(str, columns))
+        raise ValueError(f"Unknown output format {output_format}, use 'votable' or 'csv'")
 
-    plx_bound = plx_sigmas * plx_e
-    pm_bound = pm_sigmas * pm_e
+    if not os.path.exists(cone_file) or overwrite_cone:
+        if not os.path.exists(cluster_dir):
+            os.makedirs(cluster_dir)
 
-    query = """
-            SELECT
-                {columns}
-            FROM
-                {table_name}
-            WHERE
-                1 = CONTAINS(POINT('ICRS', {ra_column}, {dec_column}), CIRCLE('ICRS', {ra}, {dec}, {radius}))
-                AND abs(parallax - {plx}) <= {plx_bound}
-                AND sqrt(power(pmra - {pmra}, 2) + power(pmdec - {pmdec}, 2)) <= {pm_bound}
-            """.format(**{'columns': columns, 'table_name': table,
-                          'ra_column': Gaia.MAIN_GAIA_TABLE_RA, 'dec_column': Gaia.MAIN_GAIA_TABLE_DEC,
-                          'ra': ra, 'dec': dec, 'radius': radius,
-                          'pmra': pmra, 'pmdec': pmdec, 'pm_bound': pm_bound,
-                          'plx': plx, 'plx_bound': plx_bound})
+        Gaia.login(credentials_file=gaia_credentials_path)
 
-    print(f'Downloading {cluster.name} cone...', end=' ')
-    _ = Gaia.launch_job_async(query=query,
-                              output_file=cone_file,
-                              output_format="votable",
-                              verbose=False,
-                              dump_to_file=True)
+        ra, dec = cluster.ra, cluster.dec
+        if ra < 0:
+            ra += 360
+        radius = cone_radius / cluster.dist * 180 / np.pi
+        pmra, pmdec = cluster.pmra, cluster.pmdec
+        pmra_e, pmdec_e = cluster.pmra_error, cluster.pmdec_error
+        pm_e = np.sqrt((pmra_e**2 + pmdec_e**2) / 2)
+        plx, plx_e = cluster.parallax, cluster.parallax_error
+        plx_bound = plx_sigmas * plx_e
+        pm_bound = pm_sigmas * pm_e
 
-    Gaia.logout()
+        if query_columns is None:
+            # Default columns
+            columns = ['ra', 'dec', 'parallax', 'pmra', 'pmdec',
+                       'parallax_error', 'pmra_error', 'pmdec_error',
+                       'parallax_pmra_corr', 'parallax_pmdec_corr', 'pmra_pmdec_corr',
+                       'phot_g_mean_flux', 'phot_bp_mean_flux', 'phot_rp_mean_flux',
+                       'phot_g_mean_flux_error', 'phot_bp_mean_flux_error', 'phot_rp_mean_flux_error',
+                       'source_id',
+                       'phot_g_mean_mag', 'phot_bp_mean_mag', 'phot_rp_mean_mag',
+                       'bp_rp', 'g_rp',
+                       'l', 'b',
+                       'nu_eff_used_in_astrometry', 'pseudocolour', 'ecl_lat', 'astrometric_params_solved',
+                       'phot_g_n_obs', 'phot_bp_n_obs', 'phot_rp_n_obs']
+        else:
+            columns = query_columns
+        columns = ','.join(map(str, columns))
+
+        query = """
+                SELECT
+                    {columns}
+                FROM
+                    {table_name}
+                WHERE
+                    1 = CONTAINS(POINT('ICRS', {ra_column}, {dec_column}), CIRCLE('ICRS', {ra}, {dec}, {radius}))
+                    AND abs(parallax - {plx}) <= {plx_bound}
+                    AND sqrt(power(pmra - {pmra}, 2) + power(pmdec - {pmdec}, 2)) <= {pm_bound}
+                    AND phot_g_n_obs <> 0 AND phot_bp_n_obs <> 0 AND phot_rp_n_obs <> 0 
+                """.format(**{'columns': columns, 'table_name': table,
+                              'ra_column': Gaia.MAIN_GAIA_TABLE_RA, 'dec_column': Gaia.MAIN_GAIA_TABLE_DEC,
+                              'ra': ra, 'dec': dec, 'radius': radius,
+                              'pmra': pmra, 'pmdec': pmdec, 'pm_bound': pm_bound,
+                              'plx': plx, 'plx_bound': plx_bound})
+
+        print(f'Downloading {cluster.name} cone...', end=' ')
+        _ = Gaia.launch_job_async(query=query,
+                                  output_file=cone_file,
+                                  output_format=output_format,
+                                  verbose=False,
+                                  dump_to_file=True)
+
+        Gaia.logout()

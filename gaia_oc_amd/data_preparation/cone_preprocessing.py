@@ -7,11 +7,35 @@ from zero_point import zpt
 
 
 def init_spline(df, col_knots, col_coeff):
+    """Initializes the spline for the knots and coefficients of a given band.
+
+    Args:
+        df (DataFrame): Dataframe containing the spline parameters
+        col_knots (str): Column name of the knots for a given band
+        col_coeff (str): Column name of the coefficients for a given band
+
+    Returns:
+        spline (Bspline): Spline indicating the expected uncertainty for a given band.
+
+    """
     ddff = df[[col_knots, col_coeff]].dropna()
-    return interpolate.BSpline(ddff[col_knots], ddff[col_coeff], 3, extrapolate=False)
+    spline = interpolate.BSpline(ddff[col_knots], ddff[col_coeff], 3, extrapolate=False)
+    return spline
 
 
 class Edr3MagUncertainty:
+    """Class for estimating the uncertainty of the magnitude in a given band. This is done by means of a precomputed
+    spline, which indicates the expected uncertainty for a given mean magnitude after a fixed amount of
+    observations.
+
+    Reference: This research has made use of the tool provided by Gaia DPAC
+    (https://www.cosmos.esa.int/web/gaia/dr3-software-tools) to reproduce (E)DR3 Gaia photometric uncertainties
+    described in the GAIA-C5-TN-UB-JMC-031 technical note using data in Riello et al. (2021).
+
+    Args:
+        spline_csv (str): Path to the parameters of the precomputed splines.
+
+    """
     def __init__(self, spline_csv):
         _df = pd.read_csv(spline_csv)
         splines = dict()
@@ -22,12 +46,35 @@ class Edr3MagUncertainty:
         self.__nobs = {'g': 200, 'bp': 20, 'rp': 20}
 
     def estimate(self, band, mag, nobs):
+        """Estimates the uncertainty for a given magnitude in a band after a certain amount of observations. In the
+        case that the magnitude exceeds the bounds of the spline, the source is attributed with the error as
+        would be found for the boundary magnitude.
+
+        Args:
+            band (str): Name of the band ('g', 'bp', 'rp')
+            mag (float, array): Array with the magnitudes of a number of sources
+            nobs (float, int): The number of observations in the given band for each source
+
+        Returns:
+            mag_error (float, array): Array with the magnitude uncertainties for each source
+        """
         mag = np.where(mag > 20.95, 20.95, mag)
         mag = np.where(mag < 4.05, 4.05, mag)
-        return 10 ** (self.__splines[band](mag) - np.log10(np.sqrt(nobs) / np.sqrt(self.__nobs[band])))
+        mag_error = 10 ** (self.__splines[band](mag) - np.log10(np.sqrt(nobs) / np.sqrt(self.__nobs[band])))
+        return mag_error
 
 
 def set_magnitude_errors(cone):
+    """This function estimates the uncertainty in the three magnitude bands and uses these to calculate the errors
+    in the colours as well. The cone is returned with the calculated uncertainties as attributes.
+
+    Args:
+        cone (Dataframe): Dataframe containing the data of the sources in the cone search.
+
+    Returns:
+        cone (Dataframe): Dataframe the cone sources which have magnitude and colour errors as attributes.
+
+    """
     u = Edr3MagUncertainty(os.path.join(os.path.dirname(__file__), 'LogErrVsMagSpline.csv'))
     cone['phot_g_mean_mag_error'] = u.estimate('g', cone['phot_g_mean_mag'], cone['phot_g_n_obs'])
     cone['phot_bp_mean_mag_error'] = u.estimate('bp', cone['phot_bp_mean_mag'], cone['phot_bp_n_obs'])
@@ -62,64 +109,12 @@ def unsplit_sky_positions(sources, coordinate_system='icrs'):
             sources[coordinate] = x
 
 
-def magnitude_error_from_flux_error(flux, flux_error, zero_point_error):
-    """Calculates the error of the mean magnitude from the error of the mean flux.
-
-    Args:
-        flux (Series): Right ascension
-        flux_error (Series): Right ascension
-        zero_point_error (float): Error in the magnitude zero point
-
-    Returns:
-        mean_mag_error (float): The projected x coordinate
-
-    """
-    mean_mag_error = np.sqrt((-2.5 * flux_error / (flux * np.log(10)))**2 + zero_point_error**2)
-    return mean_mag_error
-
-
-def phot_g_mean_mag_error_function():
-    """Creates a function that can be applied to a dataframe of sources to calculate the G magnitude error.
-
-    Returns:
-        phot_g_mean_mag_error (function): Function that returns the G magnitude error
-
-    """
-    sigma_g_0 = 0.0027553202
-
-    def phot_g_mean_mag_error(source):
-        g_flux, g_flux_error = source[f'phot_g_mean_flux'], source[f'phot_g_mean_flux_error']
-        return magnitude_error_from_flux_error(g_flux, g_flux_error, sigma_g_0)
-    return phot_g_mean_mag_error
-
-
-def bp_rp_error_function():
-    """Creates a function that can be applied to a dataframe of sources to calculate the BP-RP colour error.
-
-    Returns:
-        bp_rp_error (function): Function that returns the BP-RP colour error
-
-    """
-    sigma_bp_0 = 0.0027901700
-    sigma_rp_0 = 0.0037793818
-
-    def bp_rp_error(source):
-        bp_flux, bp_flux_error = source[f'phot_bp_mean_flux'], source[f'phot_bp_mean_flux_error']
-        rp_flux, rp_flux_error = source[f'phot_rp_mean_flux'], source[f'phot_rp_mean_flux_error']
-
-        bp_mean_mag_error = magnitude_error_from_flux_error(bp_flux, bp_flux_error, sigma_bp_0)
-        rp_mean_mag_error = magnitude_error_from_flux_error(rp_flux, rp_flux_error, sigma_rp_0)
-        return np.sqrt(bp_mean_mag_error**2 + rp_mean_mag_error**2)
-    return bp_rp_error
-
-
 def cone_preprocessing(cone):
     """Applies the following preprocessing steps on the cone search data.
-     - Drop sources without colours
+     - Drop sources with NaN values
      - Correct the parallax of the cone sources for the parallax zero-point
-     - Correct the magnitude and colour of cone sources for interstellar extinction
-     - Adjust the coordinates to prevent a split in the sky position plot
      - Calculate magnitude and colour errors of the cone sources from their flux data
+     - Adjust the coordinates to prevent a split in the sky position plot
      - Set the default membership probability to zero
 
     Args:
@@ -128,9 +123,10 @@ def cone_preprocessing(cone):
     Returns:
         cone (Dataframe): Dataframe containing the (preprocessed) data of the sources in the cone search.
     """
-    # Drop sources without colours
-    bad_sources = np.arange(len(cone))[np.isnan(cone['bp_rp'].values)]
-    cone = cone.drop(bad_sources).reset_index(drop=True)
+    columns = cone.columns.to_list()
+    cone = cone.dropna(subset=[col for col in columns if col not in ['nu_eff_used_in_astrometry',
+                                                                     'pseudocolour']])
+    cone = cone.query('~nu_eff_used_in_astrometry.isnull() | ~pseudocolour.isnull()')
 
     # Correct the parallax of the cone sources for the parallax zero-point
     zpt.load_tables()

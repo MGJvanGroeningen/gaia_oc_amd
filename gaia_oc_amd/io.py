@@ -63,19 +63,26 @@ def load_cluster_parameters(cluster_parameters_path, cluster_name, new_column_na
         return None
 
 
-def load_cone(cone_path):
-    """Loads in the data of the stars found in the cone search. Also performs a number of preprocessing steps.
+def load_cone(save_dir):
+    """Loads in the data of the stars found in the cone search.
 
     Args:
-        cone_path (str): Path to the (vot.gz) file where the cone search data is saved.
+        save_dir (str): Path to the directory where the cone search data is saved.
 
     Returns:
         cone (Dataframe): Dataframe containing the data of the sources in the cone search.
 
     """
-    cone = parse(cone_path)
-    cone = cone.get_first_table().to_table(use_names_over_ids=True)
-    cone = cone.to_pandas()
+    votable_path = os.path.join(save_dir, 'cone.vot.gz')
+    csv_path = os.path.join(save_dir, 'cone.csv')
+    if os.path.exists(votable_path):
+        cone = parse(votable_path)
+        cone = cone.get_first_table().to_table(use_names_over_ids=True)
+        cone = cone.to_pandas()
+    elif os.path.exists(csv_path):
+        cone = pd.read_csv(csv_path)
+    else:
+        raise IOError(f"No cone data file ('cone.vot.gz' or 'cone.csv') found in directory {save_dir}")
     return cone
 
 
@@ -196,8 +203,6 @@ def load_cluster(save_dir):
         cluster (Cluster): Cluster object
 
     """
-    # with open(os.path.join(save_dir, 'cluster'), 'rb') as cluster_file:
-    #     cluster = pickle.load(cluster_file)
     with open(os.path.join(save_dir, 'cluster'), 'r') as cluster_file:
         cluster_params = json.load(cluster_file)
     if cluster_params['isochrone'] is not None:

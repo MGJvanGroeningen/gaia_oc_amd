@@ -21,10 +21,11 @@ def build_sets(cluster_names, clusters_dir='./data/clusters', cluster_parameters
                train_members_path='./data/cg20b_members.csv', credentials_path='./gaia_credentials',
                isochrone_path='./data/isochrones.dat', comparison_members_path='./data/t22_members.csv',
                train_members_label='CG20', comparison_members_label='T22', cone_radius=50., cone_pm_sigmas=10.,
-               cone_plx_sigmas=10., overwrite_cone=False, prob_threshold=1.0, n_min_members=15, bootstrap_members=False,
-               bootstrap_prob=0.96, colour='g_rp', pm_error_weight=3.0, r_max_margin=15., c_margin=0.1, g_margin=0.8,
-               source_error_weight=3.0, show=False, save_plot=True, save_source_sets=True, save_cluster_params=True,
-               fast_mode=False):
+               cone_plx_sigmas=10., cone_file_format='votable', overwrite_cone=False, prob_threshold=1.0,
+               n_min_members=15, bootstrap_members=False, bootstrap_prob=0.96, colour='g_rp', pm_error_weight=3.0,
+               r_threshold_member_fraction=0.90, iso_threshold_member_fraction=0.90, r_max_margin=15., c_margin=0.1,
+               g_margin=0.8, source_error_weight=3.0, show_plots=False, save_plots=True, save_source_sets=True,
+               save_cluster_params=True):
     """Main function for preparing the datasets that can be used for training a model and evaluating candidate members.
     This includes the following steps:
         - Download source data through cone searches for the supplied clusters (use the 'overwrite_cone' keyword to
@@ -53,7 +54,9 @@ def build_sets(cluster_names, clusters_dir='./data/clusters', cluster_parameters
             the cone search.'
         cone_plx_sigmas (float): 'How many sigmas away from the cluster mean in parallax to look for sources for the
             cone search.'
-        overwrite_cone (bool): 'Whether to overwrite the current cone votable if it already exists.'
+        cone_file_format (str): File format in which the cone search sources are (to be) saved. Use 'votable' or 'csv'
+            'votable' uses less disk space, while 'csv' is faster.
+        overwrite_cone (bool): 'Whether to overwrite the current cone data file if it already exists.'
         prob_threshold (float): 'Minimum threshold for the probability of members to be used for training the model.
             This threshold is exceeded if there are less than n_min_members members'
         n_min_members (int): 'Minimum number of members per cluster to use for training. This must be greater than the
@@ -63,16 +66,17 @@ def build_sets(cluster_names, clusters_dir='./data/clusters', cluster_parameters
         colour (str): "Colour to use for the isochrone condition. ('bp_rp', 'g_rp')"
         pm_error_weight (float): 'Maximum deviation in proper motion (in number of sigma) from the cluster mean to be
             used in candidate selection.'
+        r_threshold_member_fraction (float): 'Fraction of the members to be included within the threshold radius.'
+        iso_threshold_member_fraction (float): 'Fraction of the members to be included within the threshold
+            deviation from the isochrone.'
         r_max_margin (float): 'Margin added to the maximum radius used for the parallax delta.'
         c_margin (float): 'Margin added to colour delta.'
         g_margin (float): 'Margin added to magnitude delta.'
         source_error_weight (float): 'How many sigma candidates may lie outside the maximum separation deltas.'
-        show (bool): 'Whether to show the candidates plot.'
-        save_plot (bool): 'Whether to save the candidates plot.'
+        show_plots (bool): 'Whether to show the candidates plot.'
+        save_plots (bool): 'Whether to save the candidates plot.'
         save_source_sets (bool): 'Whether to save the source sets.'
         save_cluster_params (bool): 'Whether to save the cluster parameters.'
-        fast_mode (bool): 'If True, use a (~4x) faster but more memory intensive method. Might run out of memory for '
-                             'many (>~10^6) sources.'
     """
 
     cluster_names = cluster_list(cluster_names)
@@ -80,16 +84,13 @@ def build_sets(cluster_names, clusters_dir='./data/clusters', cluster_parameters
     print('Building sets for:', cluster_names)
     print('Number of clusters:', n_clusters)
 
-    if not os.path.exists(clusters_dir):
-        os.mkdir(clusters_dir)
-
     for idx, cluster_name in enumerate(cluster_names):
         t0 = time.time()
         print(' ')
         print('Cluster:', cluster_name, f' ({idx + 1} / {n_clusters})')
         cluster_dir = os.path.join(clusters_dir, cluster_name)
         if not os.path.exists(cluster_dir):
-            os.mkdir(cluster_dir)
+            os.makedirs(cluster_dir)
 
         print('Loading cluster parameters...', end=' ')
         if os.path.exists(cluster_parameters_path):
@@ -102,15 +103,21 @@ def build_sets(cluster_names, clusters_dir='./data/clusters', cluster_parameters
                 if save_cluster_params and not os.path.exists(os.path.join(cluster_dir, 'cluster')):
                     save_cluster(cluster_dir, cluster)
 
-                # Download sources with a cone search
-                cone_path = os.path.join(cluster_dir, 'cone.vot.gz')
-                if not os.path.exists(cone_path) or overwrite_cone:
-                    cone_search(cluster, clusters_dir, credentials_path, cone_radius=cone_radius,
-                                pm_sigmas=cone_pm_sigmas, plx_sigmas=cone_plx_sigmas)
+                cone_search(cluster, clusters_dir, credentials_path, output_format=cone_file_format,
+                            cone_radius=cone_radius, pm_sigmas=cone_pm_sigmas, plx_sigmas=cone_plx_sigmas,
+                            overwrite_cone=overwrite_cone)
 
                 print('Preparing cone data...', end=' ')
-                cone = load_cone(cone_path)
+                cone = load_cone(cluster_dir)
                 cone = cone_preprocessing(cone)
+                cone = cone.drop(columns=['phot_g_mean_flux', 'phot_bp_mean_flux', 'phot_rp_mean_flux',
+                                          'phot_g_mean_flux_error', 'phot_bp_mean_flux_error',
+                                          'phot_rp_mean_flux_error', 'phot_bp_mean_mag', 'phot_rp_mean_mag',
+                                          'phot_bp_mean_mag_error', 'phot_rp_mean_mag_error',
+                                          'nu_eff_used_in_astrometry', 'pseudocolour', 'ecl_lat',
+                                          'astrometric_params_solved', 'phot_g_n_obs', 'phot_bp_n_obs',
+                                          'phot_rp_n_obs'])
+
                 print(f'done')
 
                 print('Creating member dataframes...', end=' ')
@@ -118,10 +125,10 @@ def build_sets(cluster_names, clusters_dir='./data/clusters', cluster_parameters
                     if bootstrap_members:
                         _, candidates, _, _ = load_sets(cluster_dir)
                         members = candidates
-                        train_members = members[members['PMemb'] >= bootstrap_prob]
+                        train_members = members.query(f'PMemb >= {bootstrap_prob}')
                     else:
                         members = load_members(train_members_path, cluster.name)
-                        train_members = members[members['PMemb'] >= prob_threshold]
+                        train_members = members.query(f'PMemb >= {prob_threshold}')
 
                     if len(train_members) >= n_min_members:
                         train_members_ids = train_members['source_id']
@@ -164,7 +171,9 @@ def build_sets(cluster_names, clusters_dir='./data/clusters', cluster_parameters
                                                                    pm_error_weight=pm_error_weight,
                                                                    r_max_margin=r_max_margin, c_margin=c_margin,
                                                                    g_margin=g_margin,
-                                                                   source_error_weight=source_error_weight)
+                                                                   source_error_weight=source_error_weight,
+                                                                   r_threshold_member_fraction=r_threshold_member_fraction,
+                                                                   iso_threshold_member_fraction=iso_threshold_member_fraction)
 
                         # Construct the candidate and non-member set
                         candidates, non_members = candidate_and_non_member_set(cone, cluster)
@@ -181,9 +190,18 @@ def build_sets(cluster_names, clusters_dir='./data/clusters', cluster_parameters
                         # Construct the comparison set
                         comparison_members = member_set(cone, comparison_member_ids, comparison_member_probs)
 
+                        non_members = non_members.drop(columns=['parallax_error', 'pmra_error', 'pmdec_error',
+                                                                'parallax_pmra_corr', 'parallax_pmdec_corr',
+                                                                'pmra_pmdec_corr', 'phot_g_mean_mag_error',
+                                                                'bp_rp_error', 'g_rp_error'])
+                        train_members = train_members.drop(columns=['parallax_pmra_corr', 'parallax_pmdec_corr',
+                                                                    'pmra_pmdec_corr'])
+                        comparison_members = comparison_members.drop(columns=['parallax_pmra_corr',
+                                                                              'parallax_pmdec_corr',
+                                                                              'pmra_pmdec_corr'])
+
                         # Add the custom training features to the columns of the source dataframes
-                        add_features([train_members, candidates, non_members, comparison_members], cluster,
-                                     fast_mode=fast_mode)
+                        add_features([train_members, candidates, non_members, comparison_members], cluster)
                         print(f'done')
 
                         print(' ')
@@ -198,8 +216,8 @@ def build_sets(cluster_names, clusters_dir='./data/clusters', cluster_parameters
                                      candidates=candidates, field_sources=non_members, plot_type='candidates',
                                      title=f'{cluster.name}'.replace('_', ' '),
                                      limits=plot_sources_limits(cone, cluster.isochrone_colour),
-                                     show_isochrone=True, show_boundaries=True, cluster=cluster, show=show,
-                                     save=save_plot)
+                                     show_isochrone=True, show_boundaries=True, cluster=cluster, show=show_plots,
+                                     save=save_plots)
                         print('done')
 
                         print('Saving source sets and cluster data...', end=' ')
@@ -266,6 +284,11 @@ if __name__ == "__main__":
     parser.add_argument('--cone_plx_sigmas', nargs='?', type=float, default=10.,
                         help='How many sigmas away from the cluster mean in parallax '
                              'to look for sources for the cone search.')
+    parser.add_argument('--overwrite_cone', nargs='?', type=bool, default=False,
+                        help='Whether to overwrite the current cone data file if it already exists.')
+    parser.add_argument('--cone_file_format', nargs='?', type=str, default='votable',
+                        help="File format in which the cone search sources are (to be) saved. Use 'votable' or 'csv', "
+                             "'votable' uses less disk space, while 'csv' is faster.")
     parser.add_argument('--prob_threshold', nargs='?', type=float, default=1.0,
                         help='Minimum threshold for the probability of members to be used for training the model. '
                              'This threshold is exceeded if there are less than n_min_members members')
@@ -281,6 +304,11 @@ if __name__ == "__main__":
     parser.add_argument('--can_pm_error_weight', nargs='?', type=float, default=3.,
                         help='Maximum deviation in proper motion (in number of sigma) from the cluster mean '
                              'to be used in candidate selection.')
+    parser.add_argument('--r_threshold_member_fraction', nargs='?', type=float, default=0.90,
+                        help='Fraction of the members to be included within the threshold radius.')
+    parser.add_argument('--iso_threshold_member_fraction', nargs='?', type=float, default=0.90,
+                        help='Fraction of the members to be included within the threshold deviation from the '
+                             'isochrone.')
     parser.add_argument('--can_r_max_margin', nargs='?', type=float, default=15.,
                         help='Margin added to the maximum radius used for the parallax delta.')
     parser.add_argument('--can_c_margin', nargs='?', type=float, default=0.1,
@@ -289,9 +317,9 @@ if __name__ == "__main__":
                         help='Margin added to magnitude delta.')
     parser.add_argument('--can_source_error_weight', nargs='?', type=float, default=3.,
                         help='How many sigma candidates may lie outside the maximum deviations.')
-    parser.add_argument('--show', nargs='?', type=bool, default=False,
+    parser.add_argument('--show_plots', nargs='?', type=bool, default=False,
                         help='Whether to show the candidates plot.')
-    parser.add_argument('--save_plot', nargs='?', type=bool, default=True,
+    parser.add_argument('--save_plots', nargs='?', type=bool, default=True,
                         help='Whether to save the candidates plot.')
     parser.add_argument('--save_source_sets', nargs='?', type=bool, default=True,
                         help='Whether to save the source sets.')
@@ -299,9 +327,6 @@ if __name__ == "__main__":
                         help='Whether to save the cluster parameters.')
     parser.add_argument('--overwrite_cone', nargs='?', type=bool, default=False,
                         help='Whether to overwrite the current cone votable if it already exists.')
-    parser.add_argument('--fast_mode', nargs='?', type=bool, default=False,
-                        help='If True, use a faster but more memory intensive method, which might crash for '
-                             'many (>~10^6) sources.')
 
     args_dict = vars(parser.parse_args())
 
@@ -317,6 +342,7 @@ if __name__ == "__main__":
                cone_radius=args_dict['cone_radius'],
                cone_pm_sigmas=args_dict['cone_pm_sigmas'],
                cone_plx_sigmas=args_dict['cone_plx_sigmas'],
+               cone_file_format=args_dict['cone_file_format'],
                overwrite_cone=args_dict['overwrite_cone'],
                prob_threshold=args_dict['prob_threshold'],
                n_min_members=args_dict['n_min_members'],
@@ -324,12 +350,13 @@ if __name__ == "__main__":
                bootstrap_prob=args_dict['bootstrap_prob'],
                colour=args_dict['can_colour'],
                pm_error_weight=args_dict['can_pm_error_weight'],
+               r_threshold_member_fraction=args_dict['r_threshold_member_fraction'],
+               iso_threshold_member_fraction=args_dict['iso_threshold_member_fraction'],
                r_max_margin=args_dict['can_r_max_margin'],
                c_margin=args_dict['can_c_margin'],
                g_margin=args_dict['can_g_margin'],
                source_error_weight=args_dict['can_source_error_weight'],
-               show=args_dict['show'],
-               save_plot=args_dict['save_plot'],
+               show_plots=args_dict['show_plots'],
+               save_plots=args_dict['save_plots'],
                save_source_sets=args_dict['save_source_sets'],
-               save_cluster_params=args_dict['save_cluster_params'],
-               fast_mode=args_dict['fast_mode'])
+               save_cluster_params=args_dict['save_cluster_params'])

@@ -13,7 +13,7 @@ from gaia_oc_amd.candidate_evaluation.diagnostics import make_density_profile, m
 from gaia_oc_amd.data_preparation.features import isochrone_features_function
 
 
-def plot_metrics(metrics, save_dir, loss_ylim=None, metric_ylim=None, show=True, save=True):
+def plot_metrics(metrics, save_dir, loss_ylim=None, metric_ylim=None, epoch_tick_step=10, show=True, save=True):
     """Plots the evolution of a number of metrics during training.
 
     Args:
@@ -22,6 +22,7 @@ def plot_metrics(metrics, save_dir, loss_ylim=None, metric_ylim=None, show=True,
         save_dir (str): Directory where the plot is saved
         loss_ylim (tuple, float): Loss plot y-axis limits
         metric_ylim (tuple, float): Metrics plot y-axis limits
+        epoch_tick_step (int): The tick step for the epoch axis
         show (bool): Whether to show the plot
         save (bool): Whether to save the plot
 
@@ -36,19 +37,20 @@ def plot_metrics(metrics, save_dir, loss_ylim=None, metric_ylim=None, show=True,
         if len(metric) > 0:
             ax[0].plot(epochs, metric, label=mode, linestyle=fmt, c='tab:blue')
 
-    for metr, col in zip(['precision', 'recall', 'selectivity', 'accuracy', 'balanced_accuracy', 'f1'],
-                         ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple', 'tab:brown']):
+    for metr, col, lab in zip(['precision', 'recall', 'selectivity', 'accuracy', 'balanced_accuracy', 'f1'],
+                              ['tab:blue', 'tab:orange', 'tab:green', 'tab:red', 'tab:purple', 'tab:brown'],
+                              ['precision', 'recall', 'selectivity', 'accuracy', 'balanced accuracy', 'F1']):
         for mode, fmt in zip(['train', 'val'], ['-', '--']):
             metric = metrics[f'{mode}_{metr}']
             if len(metric) > 0:
-                ax[1].plot(epochs, metric, label=mode + ' ' + metr.replace('_', ' '), linestyle=fmt, c=col)
+                ax[1].plot(epochs, metric, label=mode + ' ' + lab, linestyle=fmt, c=col)
     
     labels = ['loss', 'metric']
     titles = ['Loss', 'Metrics']
     legend_fontsize = [10, 10]
     
     for i in range(2):
-        ax[i].set_xticks(epochs[::5])
+        ax[i].set_xticks(epochs[::epoch_tick_step])
         ax[i].set_xlabel('epoch', fontsize=16)
         ax[i].set_ylabel(labels[i], fontsize=16)
         ax[i].set_title(titles[i], fontsize=20)
@@ -275,6 +277,9 @@ def member_colors(c_map, members, color_norm):
         members (Dataframe): Dataframe containing member sources
         color_norm (Normalize): A matplotlib.colors.Normalize object that defines the boundary color values
 
+    Returns:
+        color (array): An array of rbga values corresponding the membership probability of the members.
+
     """
     mapper = cm.ScalarMappable(norm=color_norm, cmap=c_map)
     color = np.array([(mapper.to_rgba(v)) for v in members['PMemb']])
@@ -380,42 +385,61 @@ def unique_members_plot(ax, x, y, members1, members2, label='unique members'):
                     markersize=0.0, yerr=unique_members[y_error], fmt='none', ecolor=color, elinewidth=0.1, zorder=0)
 
 
-def plot_zero_error_boundaries(ax, x, y, cluster):
+def plot_zero_error_boundaries(ax, x, y, cluster, label='zero-uncertainty boundary'):
+    """Plots curves that indicate the boundary between candidates and non-members for sources with negligible
+    uncertainties.
+
+    Args:
+        ax (AxesSubplot): AxesSubplot object on which to make the plot
+        x (str): Label of the x-axis property
+        y (str): Label of the y-axis property
+        cluster (Cluster): Cluster object
+        label (string): Label of the uncertainty boundary
+
+    """
     if cluster is not None:
         if cluster.delta_pm is not None:
             if x == 'pmra':
                 delta_pm = cluster.delta_pm
                 ellipse = Ellipse((cluster.pmra, cluster.pmdec), width=2 * delta_pm, height=2 * delta_pm,
-                                  facecolor='none', edgecolor='red', ls='--', zorder=4, linewidth=1.5,
-                                  label='zero-error boundary')
+                                  facecolor='none', edgecolor='red', ls='--', zorder=4, linewidth=1.5, label=label)
                 ax.add_patch(ellipse)
             elif y == 'parallax':
                 x_min, x_max = ax.get_xlim()
                 ax.hlines((cluster.parallax - cluster.delta_plx_plus, cluster.parallax + cluster.delta_plx_min), x_min,
-                          x_max, colors='red', linestyles='dashed', linewidths=1.5, zorder=4,
-                          label='zero-error boundary')
+                          x_max, colors='red', linestyles='dashed', linewidths=1.5, zorder=4, label=label)
             elif y == 'phot_g_mean_mag' and cluster.isochrone is not None:
-                xs = np.linspace(cluster.isochrone[cluster.isochrone_colour].min() - 1.0,
-                                 cluster.isochrone[cluster.isochrone_colour].max() + 1.0, 50)
-                ys = np.linspace(cluster.isochrone['phot_g_mean_mag'].min() - 2.0,
-                                 cluster.isochrone['phot_g_mean_mag'].max() + 2.0, 200)
+                xs = np.linspace(max(cluster.isochrone[cluster.isochrone_colour].min(), -1) - 1.0,
+                                 min(cluster.isochrone[cluster.isochrone_colour].max(), 2.5) + 1.0, 50)
+                ys = np.linspace(max(cluster.isochrone['phot_g_mean_mag'].min(), -2) - 2.0,
+                                 min(cluster.isochrone['phot_g_mean_mag'].max(), 22) + 2.0, 200)
 
                 xx, yy = np.meshgrid(xs, ys)
                 grid_stars = pd.DataFrame.from_dict({cluster.isochrone_colour: xx.flatten(), 
                                                      'phot_g_mean_mag': yy.flatten()})
-                f_iso_f = isochrone_features_function(cluster.isochrone, cluster.delta_c, cluster.delta_g,
-                                                      colour=cluster.isochrone_colour, scale_features=True)
-                zz = np.linalg.norm(np.stack(grid_stars.apply(f_iso_f, axis=1).to_numpy()), axis=1).reshape(200, 50)
+                f_c, f_g = isochrone_features_function(grid_stars, cluster.isochrone, cluster.delta_c, cluster.delta_g,
+                                                       colour=cluster.isochrone_colour, scale_features=True)
+                zz = np.linalg.norm(np.stack(np.array([f_c, f_g]).T), axis=1).reshape(200, 50)
                 c = ax.contour(xx, yy, zz, levels=[1.0], colors='red', linestyles='dashed', linewidths=1.5, zorder=4)
-                c.collections[0].set_label('zero-error boundary')
+                c.collections[0].set_label(label)
         else:
             raise UserWarning('The maximum separation Delta are not defined for this cluster. Use'
                               ' the Cluster.set_feature_parameters() function to set them.')
     else:
-        raise TypeError('A Cluster() object needs to be supplied to show zero error boundaries.')
+        raise TypeError('A Cluster object needs to be supplied to show zero error boundaries.')
 
 
 def plot_features(ax, x, y, source, cluster):
+    """Plots vectors of which the magnitudes indicate the value of source features for a specific source.
+
+    Args:
+        ax (AxesSubplot): AxesSubplot object on which to make the plot
+        x (str): Label of the x-axis property
+        y (str): Label of the y-axis property
+        source (pd.Dataframe): A dataframe (with one row) which contains the properties and features of a single source.
+        cluster (Cluster): Cluster object
+
+    """
     if cluster is not None:
         if cluster.delta_pm is not None:
             if x == 'pmra' or x == 'l':
@@ -428,9 +452,9 @@ def plot_features(ax, x, y, source, cluster):
                 ax.hlines(cluster.parallax, x_min, x_max, colors='black', linestyles='dashed', linewidths=1.5, zorder=4,
                           label='mean parallax')
             if x == cluster.isochrone_colour and cluster.isochrone is not None:
-                f_iso_f = isochrone_features_function(cluster.isochrone, cluster.delta_c, cluster.delta_g,
-                                                      colour=cluster.isochrone_colour)
-                vector_to_isochrone = source.apply(f_iso_f, axis=1).to_numpy()[0]
+                f_c, f_g = isochrone_features_function(source, cluster.isochrone, cluster.delta_c, cluster.delta_g,
+                                                       colour=cluster.isochrone_colour)
+                vector_to_isochrone = np.array([f_c, f_g]).T[0]
                 ax.annotate("", xy=(source[x],
                                     source[y]),
                             xytext=(source[x],
@@ -495,7 +519,7 @@ def plot_sources(members, save_file='members.png', colour='g_rp', comparison=Non
             ('l', 'b', 'pmra', 'pmdec', 'parallax', 'phot_g_mean_mag', cluster.isochrone_colour)
         show_features_source_id (int): Identity of a source for which to display its features with vectors
         show_isochrone (bool): Whether to plot the isochrone
-        show_boundaries (bool): Whether to show zero-error boundaries
+        show_boundaries (bool): Whether to show zero-uncertainty boundaries
         cluster (Cluster): Cluster object
         fig_size (tuple, float): Tuple containing the dimension of the figure (width, height)
         title_size (float): Size of the plot title

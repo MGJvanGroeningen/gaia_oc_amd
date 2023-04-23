@@ -22,7 +22,7 @@ def make_density_profile(members, cluster):
         sigmas (float, array): Density errors of the density profile
 
     """
-    r = members.apply(radius_feature_function(cluster.ra, cluster.dec, cluster.dist), axis=1)
+    r = radius_feature_function(members, cluster.ra, cluster.dec, cluster.dist)
     r_max = r.max()
 
     # Bins that define the radius boundaries of the concentric shells in which to count members

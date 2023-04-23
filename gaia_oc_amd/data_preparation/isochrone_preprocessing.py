@@ -29,27 +29,27 @@ def isochrone_preprocessing(isochrone, dist, a0=0., colour='g_rp', oldest_stage=
     """
     # Exclude data beyond the evolutionary stage of the early asymptotic giant branch
     if oldest_stage >= 0:
-        processed_isochrone = isochrone[isochrone['label'] <= oldest_stage].copy().reset_index(drop=True)
+        isochrone = isochrone.query('label <= @oldest_stage').copy()
     else:
         raise ValueError(f'The oldest stage must {oldest_stage} be a positive integer.')
 
     # Correct the isochrone magnitudes for extinction
-    processed_isochrone = correct_for_extinction(processed_isochrone, a0)
+    isochrone = correct_for_extinction(isochrone, a0)
 
     # Define colours
-    processed_isochrone['bp_rp'] = processed_isochrone.loc[:, 'G_BPmag'] - processed_isochrone.loc[:, 'G_RPmag']
-    processed_isochrone['g_rp'] = processed_isochrone.loc[:, 'phot_g_mean_mag'] - processed_isochrone.loc[:, 'G_RPmag']
+    isochrone['bp_rp'] = isochrone.loc[:, 'G_BPmag'] - isochrone.loc[:, 'G_RPmag']
+    isochrone['g_rp'] = isochrone.loc[:, 'phot_g_mean_mag'] - isochrone.loc[:, 'G_RPmag']
 
     # Convert to apparent magnitude
     distance_modulus = 5 * np.log10(dist) - 5
-    processed_isochrone['phot_g_mean_mag'] += distance_modulus
+    isochrone['phot_g_mean_mag'] += distance_modulus
 
     # Fill sparse segments of the isochrone
-    processed_isochrone = interpolate_isochrone(processed_isochrone, interpolation_density=interpolation_density,
-                                                colour=colour, oldest_stage_to_interpolate=oldest_stage_to_interpolate)
+    isochrone = interpolate_isochrone(isochrone, interpolation_density=interpolation_density,
+                                      colour=colour, oldest_stage_to_interpolate=oldest_stage_to_interpolate)
 
-    processed_isochrone = processed_isochrone[[colour, 'phot_g_mean_mag']]
-    return processed_isochrone
+    isochrone = isochrone[[colour, 'phot_g_mean_mag']]
+    return isochrone
 
 
 def danielski_extinction(bp_rp, a0, danielski_parameters):
@@ -91,7 +91,7 @@ def correct_for_extinction(isochrone, a0, mode='dustapprox_precomputed'):
         danielski_g_parameters = (0.9761, -0.1704, 0.0086, 0.0011, -0.0438, 0.0013, 0.0099)
         danielski_bp_parameters = (1.1517, -0.0871, -0.0333, 0.0173, -0.0230, 0.0006, 0.0043)
         danielski_rp_parameters = (0.6104, -0.0170, -0.0026, -0.0017, -0.0078, 0.00005, 0.0006)
-        bp_rp = isochrone['bp_rp']
+        bp_rp = isochrone['G_BPmag'] - isochrone['G_RPmag']
         kg = danielski_extinction(bp_rp, a0, danielski_g_parameters)
         kbp = danielski_extinction(bp_rp, a0, danielski_bp_parameters)
         krp = danielski_extinction(bp_rp, a0, danielski_rp_parameters)
@@ -100,11 +100,13 @@ def correct_for_extinction(isochrone, a0, mode='dustapprox_precomputed'):
         ms_data = isochrone['label'] <= 1
         top_data = isochrone['label'] > 1
         for subset, flavor in zip([ms_data, top_data], ['ms', 'top']):
-            bp_rp = isochrone[subset]['bp_rp']
+            bp_rp = isochrone[subset]['G_BPmag'] - isochrone[subset]['G_RPmag']
             kg[subset] = edr3ext.from_bprp('kG', bp_rp, a0, flavor=flavor)
             kbp[subset] = edr3ext.from_bprp('kBP', bp_rp, a0, flavor=flavor)
             krp[subset] = edr3ext.from_bprp('kRP', bp_rp, a0, flavor=flavor)
     elif mode == 'dustapprox_precomputed':
+        log_temp_eff_max = np.log10(50000)
+        isochrone = isochrone.query(f'logTe <= {log_temp_eff_max}').copy()
         isochrone['teff'] = 10 ** isochrone['logTe']
         isochrone['A0'] = a0
         lib = PrecomputedModel()
@@ -115,6 +117,9 @@ def correct_for_extinction(isochrone, a0, mode='dustapprox_precomputed'):
         kg = model_g.predict(isochrone)
         kbp = model_bp.predict(isochrone)
         krp = model_rp.predict(isochrone)
+    else:
+        raise ValueError(f"Mode '{mode}' unknown for isochrone extinction correction. "
+                         f"Use 'danielski_2018', 'EDR3' or 'dustapprox_precomputed'")
 
     isochrone['phot_g_mean_mag'] += kg * a0
     isochrone['G_BPmag'] += kbp * a0
@@ -136,8 +141,8 @@ def interpolate_isochrone(isochrone, interpolation_density=10., colour='g_rp', o
     Returns:
         isochrone (Dataframe): Dataframe containing colour and magnitude values of the isochrone curve.
     """
-    old_isochrone = isochrone[isochrone['label'] > oldest_stage_to_interpolate].copy()
-    young_isochrone = isochrone[isochrone['label'] <= oldest_stage_to_interpolate].copy()
+    old_isochrone = isochrone.query(f'label > {oldest_stage_to_interpolate}').copy()
+    young_isochrone = isochrone.query(f'label <= {oldest_stage_to_interpolate}').copy()
     if len(young_isochrone) > 0 and interpolation_density > 0:
         min_dist = 1 / interpolation_density
         n_young_isochrone = len(young_isochrone)

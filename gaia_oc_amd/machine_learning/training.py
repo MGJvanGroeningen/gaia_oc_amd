@@ -11,8 +11,14 @@ from gaia_oc_amd.io import save_hyper_parameters, save_model
 
 
 def calculate_metrics(tp, tn, fp, fn):
-    """Calculates a number of metrics based on the number of true positives,
-    true negatives, false positives and false negatives.
+    """Calculates a number of metrics based on the number of true positives, true negatives, false positives and
+    false negatives. The metrics include:
+        - precision: Fraction of positive classifications that were correct
+        - recall: Fraction of positive examples that were correctly classified (true positive rate)
+        - selectivity: Fraction of negative examples that were correctly classified (true negative rate)
+        - accuracy: Fraction of examples that were correctly classified
+        - balanced_accuracy: Mean of the recall and selectivity
+        - f1: F1 score, harmonic mean of the precision and recall
 
     Args:
         tp (int): Number of true positives
@@ -21,12 +27,7 @@ def calculate_metrics(tp, tn, fp, fn):
         fn (int): Number of false negatives
 
     Returns:
-        precision (float): Fraction of positive classifications that were correct
-        recall (float): Fraction of positive examples that were correctly classified (true positive rate)
-        selectivity (float): Fraction of negative examples that were correctly classified (true negative rate)
-        accuracy (float): Fraction of examples that were correctly classified
-        balanced_accuracy (float): Mean of the recall and selectivity
-        f1 (float): F1 score, harmonic mean of the precision and recall
+        metric_dict (dict): Dictionary containing a number of classification metrics for the given epoch
     """
     precision = tp / (tp + fp)
     recall = tp / (tp + fn)
@@ -59,8 +60,7 @@ def step(data_set, model, optimizer, criterion, epoch, mode='train'):
 
     Returns:
         loss (float): The mean loss of the epoch
-        pos_acc (float): Percentage of members that were correctly classified
-        neg_acc (float): Percentage of non-members that were correctly classified
+        metrics (dict): Dictionary containing a number of classification metrics for the given epoch
     """
     losses = []
     data_size = len(data_set)
@@ -132,8 +132,8 @@ def train_model(model, model_save_dir, train_dataset, val_dataset=None, num_epoc
         load_model (bool): Whether to load model parameters from a state dict
 
     Returns:
-        metrics (dict): Dictionary containing the loss and (non-)member classification
-        accuracies for every epoch
+        metrics_dict (dict): Dictionary containing the loss and a number of classification
+        metrics for every epoch
     """
     model_parameters_path = os.path.join(model_save_dir, 'model_parameters')
     if not os.path.exists(model_save_dir):

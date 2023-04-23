@@ -17,8 +17,8 @@ def train_deep_sets_model(cluster_names, clusters_dir='./clusters', model_dir='.
                           validation_fraction=0.3, size_support_set=10, batch_size=32, n_pos_duplicates=2,
                           neg_pos_ratio=5, source_features=('f_r', 'f_pm', 'f_plx', 'f_c', 'f_g'),
                           cluster_features=('a0', 'age', 'parallax'), hidden_size=64, load_model=False, n_epochs=100,
-                          lr=1e-6, l2=1e-5, weight_imbalance=5., early_stopping_threshold=20, seed=42, show=False,
-                          save_plot=True):
+                          lr=1e-6, l2=1e-5, weight_imbalance=5., early_stopping_threshold=20, seed=42, show_plots=False,
+                          save_plots=True):
     """Main function for training a deep sets model on the members and non-members of a list of clusters. This function
     contains the following steps:
         - Create a normalized training and validation set from the members and non-members of the supplied clusters.
@@ -28,8 +28,8 @@ def train_deep_sets_model(cluster_names, clusters_dir='./clusters', model_dir='.
         - Save and optionally plot the metrics which were kept track of during training
 
     Args:
-        cluster_names (str, list): 'Names of the open cluster(s) we want to build sets for. Can be a name or a file
-            with cluster names.'
+        cluster_names (str, list): 'Names of the open cluster(s) we want to use for training the model. Can be a name
+            or a file with cluster names.'
         clusters_dir (str): 'Directory where cluster data (e.g. cone searches, source sets) and results will be saved.'
         model_dir (str): 'Directory where the model parameters will be saved.'
         validation_fraction (float): 'Fraction of the data to use for validation.'
@@ -50,13 +50,13 @@ def train_deep_sets_model(cluster_names, clusters_dir='./clusters', model_dir='.
         early_stopping_threshold (int): 'Number of epochs after which the training is terminated if the model has not
             improved.'
         seed (int): 'The seed that determines the distribution of train and validation data.'
-        show (bool): 'Whether to show the candidates plot.'
-        save_plot (bool): 'Whether to save the candidates plot.'
+        show_plots (bool): 'Whether to show the loss and accuracy plot.'
+        save_plots (bool): 'Whether to save the loss and accuracy plot.'
 
     """
     cluster_names = cluster_list(cluster_names)
     if not os.path.exists(model_dir):
-        os.mkdir(model_dir)
+        os.makedirs(model_dir)
 
     source_features = list(source_features)
     cluster_features = list(cluster_features)
@@ -117,8 +117,8 @@ def train_deep_sets_model(cluster_names, clusters_dir='./clusters', model_dir='.
     save_metrics(model_dir, metrics)
 
     # Show training progress
-    plot_metrics(metrics, model_dir, show=show, save=save_plot)
-    if save_plot:
+    plot_metrics(metrics, model_dir, show=show_plots, save=save_plots)
+    if save_plots:
         print(f'Created loss and accuracy plot at {os.path.abspath(os.path.join(model_dir, "metrics.png"))}')
 
 
@@ -126,8 +126,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument('cluster_names', nargs='?', type=str,
-                        help='Names of the open cluster(s) we want to build sets for. '
-                             'Can be a name or a file with cluster names.')
+                        help='Names of the open cluster(s) we want to use for training the model. Can be a name '
+                             'or a file with cluster names.')
     parser.add_argument('--clusters_dir', nargs='?', type=str, default='clusters',
                         help='Directory where cluster data (i.e. cluster properties, source sets) is saved.')
     parser.add_argument('--model_dir', nargs='?', type=str, default='deep_sets_model',
@@ -164,9 +164,9 @@ if __name__ == "__main__":
                         help='Number of epochs after which the training is terminated if the model has not improved.')
     parser.add_argument('--seed', nargs='?', type=int, default=42,
                         help='The seed that determines the distribution of train and validation data.')
-    parser.add_argument('--show', nargs='?', type=bool, default=False,
+    parser.add_argument('--show_plots', nargs='?', type=bool, default=False,
                         help='Whether to show the loss and accuracy plot.')
-    parser.add_argument('--save_plot', nargs='?', type=bool, default=True,
+    parser.add_argument('--save_plots', nargs='?', type=bool, default=True,
                         help='Whether to save the loss and accuracy plot.')
 
     args_dict = vars(parser.parse_args())
@@ -189,5 +189,5 @@ if __name__ == "__main__":
                           weight_imbalance=args_dict['weight_imbalance'],
                           early_stopping_threshold=args_dict['early_stopping_threshold'],
                           seed=args_dict['seed'],
-                          show=args_dict['show'],
-                          save_plot=args_dict['save_plot'])
+                          show_plots=args_dict['show_plots'],
+                          save_plots=args_dict['save_plots'])

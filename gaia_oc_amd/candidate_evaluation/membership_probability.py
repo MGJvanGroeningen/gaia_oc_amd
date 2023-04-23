@@ -30,8 +30,8 @@ def means_and_covariance_matrix(sources, properties):
 
     property_errors = [prop + '_error' for prop in properties]
 
-    means = np.zeros((n_properties, n_sources))
-    cov_matrices = np.zeros((n_properties, n_properties, n_sources))
+    means = np.zeros((n_properties, n_sources), dtype=np.float32)
+    cov_matrices = np.zeros((n_properties, n_properties, n_sources), dtype=np.float32)
 
     for i in range(n_properties):
         means[i] = sources[properties[i]]
@@ -53,34 +53,9 @@ def means_and_covariance_matrix(sources, properties):
                 cov = corr * sigma_i * sigma_j
                 cov_matrices[i, j] = cov
                 cov_matrices[j, i] = cov
+    means = np.swapaxes(means, 0, 1)
+    cov_matrices = np.swapaxes(cov_matrices, 0, 2)
     return means, cov_matrices
-
-
-def sample_sources(sources, sample_properties, n_samples=1):
-    """Creates an array of sampled properties for a set of sources.
-
-    Args:
-        sources (Dataframe): Dataframe containing sources for which we want to sample some properties
-        sample_properties (str, list): Labels of the properties we want to sample
-        n_samples (int): The number of samples
-
-    Returns:
-        samples (float, array): Array with the sampled properties of the sources,
-            dimensions (n_samples, n_sources, n_properties)
-
-    """
-    n_sources = len(sources)
-    n_properties = len(sample_properties)
-    samples = np.zeros((n_sources, n_samples, n_properties))
-
-    # Determine the means and covariance matrix of the astrometric and photometric properties of the sources
-    property_means, property_cov_matrices = means_and_covariance_matrix(sources, sample_properties)
-
-    for i in range(n_sources):
-        samples[i] = np.random.multivariate_normal(mean=property_means[:, i], cov=property_cov_matrices[:, :, i],
-                                                   size=n_samples)
-    samples = np.swapaxes(samples, 0, 1)
-    return samples
 
 
 def predict_membership(dataset, model, batch_size=1024):
@@ -112,20 +87,22 @@ def predict_membership(dataset, model, batch_size=1024):
     return predictions
 
 
-def calculate_candidate_probs(cluster_dir, model_dir, n_samples=40, fast_mode=True, seed=42):
-    """Returns the membership probabilities of a set of sources, based on the model predictions
-    for a number of sampled properties of these sources.
+def calculate_candidate_probs(cluster_dir, model_dir, n_samples=40, size_support_set=10, hard_size_ss=True, seed=42):
+    """Calculates the membership probabilities of a set of sources, based on the model predictions
+    for a number of sampled properties of these sources. The probabilities are saved in the candidate csv file
+    of the corresponding cluster.
 
     Args:
         cluster_dir (str): Directory where the cluster data is stored
         model_dir (str): Directory where the model data is stored
         n_samples (int): The number of samples
-        fast_mode (bool): If True, use a faster but more memory intensive method, which might crash for
-            many (>~10^5) sources.
+        size_support_set (int): The number of members in the support set. Ideally, this is the same as the
+            support set size used in the training set, however results depend less on the size of the support set
+            when using larger numbers of samples. For clusters with less training members than the support set size,
+            the number of available training members is used for the support set size instead.
+        hard_size_ss (bool): When false, set the support set size to the number of available training members when the
+            former is larger than the latter.
         seed (int): The random seed, which determines the samples
-
-    Returns:
-        probabilities (float, array): Array of membership probabilities for the to-be-evaluated sources
 
     """
     # Load the necessary datasets (i.e. cluster, sources)
@@ -148,12 +125,19 @@ def calculate_candidate_probs(cluster_dir, model_dir, n_samples=40, fast_mode=Tr
     cluster_feature_means = np.array(hyper_parameters['cluster_feature_means'])
     cluster_feature_stds = np.array(hyper_parameters['cluster_feature_stds'])
 
-    size_support_set = hyper_parameters['size_support_set']
+    # Set the support set size to the number of available training members when the latter is smaller
+    if not hard_size_ss:
+        size_support_set = min(size_support_set, len(members))
 
     # Sample astrometric and photometric properties of the sources
     np.random.seed(seed)
     sample_properties = ['parallax', 'pmra', 'pmdec', 'phot_g_mean_mag', cluster.isochrone_colour]
-    samples = sample_sources(candidates, sample_properties=sample_properties, n_samples=n_samples)
+
+    # Determine the means and covariance matrix of the astrometric and photometric properties of the sources
+    property_means, property_cov_matrices = means_and_covariance_matrix(candidates, sample_properties)
+    n_sources = len(candidates)
+    n_properties = len(sample_properties)
+
     candidates_sample_predictions = np.zeros((n_samples, len(candidates)))
 
     update_f_pm = 'f_pm' in source_feature_names
@@ -170,14 +154,18 @@ def calculate_candidate_probs(cluster_dir, model_dir, n_samples=40, fast_mode=Tr
     # Normalize member source features which are used in the support set
     members = (members[source_feature_names].to_numpy() - source_feature_means) / source_feature_stds
 
+    samples_shape = (n_sources, n_properties)
+    cholesky_matrix = np.linalg.cholesky(property_cov_matrices)
+
     for sample_idx in tqdm(range(n_samples), total=n_samples, desc='Evaluating candidate samples'):
         # Create a copy of the sources to be evaluated and replace the original properties with sampled properties
         candidates_sample = candidates.copy()
-        candidates_sample[sample_properties] = samples[sample_idx]
+        normal = np.random.standard_normal((*samples_shape, 1))
+        candidates_sample[sample_properties] = (cholesky_matrix @ normal).reshape(samples_shape) + property_means
 
         # Update the feature values for each sample
         add_features(candidates_sample, cluster, radius_feature=False, proper_motion_feature=update_f_pm,
-                     parallax_feature=update_f_plx, isochrone_features=update_f_iso, fast_mode=fast_mode)
+                     parallax_feature=update_f_plx, isochrone_features=update_f_iso)
 
         # Normalization
         candidates_sample = (candidates_sample[source_feature_names].to_numpy() -
@@ -191,7 +179,9 @@ def calculate_candidate_probs(cluster_dir, model_dir, n_samples=40, fast_mode=Tr
         # Predict membership based on the sampled properties
         candidates_sample_predictions[sample_idx] = predict_membership(candidates_sample_dataset, model)
 
+    # Take the mean of the samples
     probabilities = np.mean(candidates_sample_predictions, axis=0)
 
+    # Save the membership probabilities
     candidates['PMemb'] = probabilities
     candidates.to_csv(os.path.join(cluster_dir, 'candidates.csv'))

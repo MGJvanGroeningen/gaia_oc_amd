@@ -1,6 +1,8 @@
 # Open Cluster Automatic Membership Determination with Gaia data
 This repository presents automatic procedure for determining new members of open clusters. We use a neural network architecture to find additional members of an open cluster based on already established probable members. To train our model, we use astrometric and photometric data of stars obtained with the Gaia space telescope. The repository contains code for downloading and preparing datasets, for training the model and for the visualization of some results. 
 
+The research paper related to this work can be found [here](https://arxiv.org/abs/2303.08474).
+
 ## Python environment setup
 
 This code is available as a PyPI package and can be installed with
@@ -50,3 +52,25 @@ This performs a cone search on the Gaia archive to obtain source data for potent
 
 If you want to explore the methods that are used, be sure to check out the tutorial notebooks in the examples directory. The `quick_tutorial.ipynb` notebook shows a minimal example while the `tutorial.ipynb` notebook walks through the methods step by step.
 
+## Version 0.2
+
+### Major changes
+
+- Improved speed and reduced memory usage of the candidate evaluation by drawing samples with Cholesky decomposition.
+- Improved speed of creating deep sets datasets by creating support sets simultaneously.
+- The 'fast_mode' for creating features is no longer optional but hard coded, due to mitigation of memory issues.
+- Fixed a bug where isochrone data points were inappropriately offset by the estimated extinction effect. These points had effective temperatures outside the range suited for the extinction model. This bug resulted in both a large increase in interpolated isochrone points, which increased feature calculation time, and messed up the zero-uncertainty boundaries in the plots as the grid on which the contour was based was too sparse.
+- Only relevant columns are retained when saving source set csv files, reducing storage memory (e.g. columns used to calculate magnitude errors are no longer needed afterwards).
+- Option to output the cone data in csv format (which loads faster than votable format, but requires more storage).
+- Option to manually set the support set size when evaluating candidates.
+- Added a new (default) pretrained model, which was trained longer and on more clusters.
+
+### Minor changes
+- Changed the iterative process for determining the isochrone and parallax deltas to linearly increase or decrease the threshold value instead of exponentially.
+- Added option to set the member fractions, used to determine the isochrone and parallax deltas, in the `build_sets` function.
+- Calculation to the isochrone distance happens in chunks to mitigate memory usage.
+- Added scikit-learn to the requirements due to dependence from the `dustapprox` package.
+- Cone search query excludes sources without BP or RP magnitude measurements.
+- Fixed bug where the `query_vizier_catalog` function would fail if no new column names were provided.
+- Fixed bug which caused an error when using the modes 'danielski_2018' and 'EDR3' in the `correct_for_extinction` function.
+- Added some new documentation and fixed a number of documentation errors. 

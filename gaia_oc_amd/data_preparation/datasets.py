@@ -64,34 +64,60 @@ def property_mean_and_std(data_dir, cluster_names, source_properties=None, clust
     return means, stds
 
 
-def concat_support_set(instance_to_classify, support_instances, size_support_set, global_features=None):
+def concat_support_set(instances_to_classify, support_instances, size_support_set, global_features=None,
+                       to_classify_indices=None):
     """Concatenates a support set to the (tiled) instance to classify in order to create
     the input for the deep sets model.
 
     Args:
-        instance_to_classify (float, array): The instance that is to be classified
-        support_instances (float, array): The instances from which to create the support set
+        instances_to_classify (float, array): The instances that are to be classified (n_instances, n_source_features)
+        support_instances (float, array): The instances from which to create the support set (n_support_instances,
+            n_source_features)
         size_support_set (int): The number of instances in the support set
-        global_features (float, array): global features to optionally add to every instance to classify
+        global_features (float, array): Global features to optionally add to every instance to classify
+            (n_global_features)
+        to_classify_indices (int, array): Indices of the instances to classify in the support instances. If these
+            are supplied, they are excluded from the support set for the corresponding instances to classify.
+            (n_instances)
 
     Returns:
         model_input (float, array): Input instance for the deep sets model
 
     """
-    n_support_instances = len(support_instances)
-    if size_support_set > n_support_instances:
+    n_to_classify = instances_to_classify.shape[0]
+    n_support = support_instances.shape[0]
+    if size_support_set > n_support:
         raise ValueError(f"The size of the support set '{size_support_set}' cannot be greater than "
-                         f"the number of support set instances '{n_support_instances}'.")
+                         f"the number of support set instances '{n_support}'.")
 
-    support_set_indices = np.random.choice(n_support_instances, size_support_set, replace=False)
-    support_set = support_instances[support_set_indices]
+    if to_classify_indices is not None:
+        n_sample = n_support - 1
+    else:
+        n_sample = n_support
+
+    if n_support > 300:
+        support_set_ids = np.stack([np.random.choice(n_sample, size_support_set, replace=False)
+                                    for _ in range(n_to_classify)])
+    else:
+        support_set_ids = np.random.rand(n_to_classify, n_sample).argsort(1)[:, :size_support_set]
+
+    if to_classify_indices is not None:
+        support_ids = np.arange(n_support)
+        tiled_support_ids = np.tile(support_ids, (n_to_classify, 1))
+        tiled_to_classify_ids = np.tile(to_classify_indices, (n_support, 1)).swapaxes(0, 1)
+        allowed = tiled_support_ids != tiled_to_classify_ids
+        allowed_support_ids = tiled_support_ids[allowed].reshape((n_to_classify, n_support - 1))
+        support_set_ids = np.take_along_axis(allowed_support_ids, support_set_ids, 1)
+
+    support_sets = support_instances[support_set_ids]
 
     if global_features is not None:
-        instance_to_classify = np.concatenate((instance_to_classify, global_features))
+        tiled_global_features = np.tile(global_features, (n_to_classify, 1))
+        instances_to_classify = np.concatenate((instances_to_classify, tiled_global_features), axis=-1)
 
-    tiled_instance_to_classify = np.tile(instance_to_classify, (size_support_set, 1))
-    model_input = np.concatenate((tiled_instance_to_classify, support_set), axis=-1)
-    return model_input
+    tiled_instances_to_classify = np.tile(instances_to_classify, (size_support_set, 1, 1)).swapaxes(0, 1)
+    model_inputs = np.concatenate((tiled_instances_to_classify, support_sets), axis=-1)
+    return model_inputs
 
 
 class MultiClusterDeepSetsDataset(Dataset):
@@ -182,8 +208,6 @@ def deep_sets_dataset(positive_examples, negative_examples, global_features=None
         dataset (tuple, list): A deep sets dataset
 
     """
-    dataset = []
-
     # Include all positive examples 'n_pos_duplicates' number of times
     n_positive_examples = positive_examples.shape[0]
     pos_example_indices = np.concatenate(n_pos_duplicates * [np.arange(n_positive_examples)])
@@ -206,23 +230,19 @@ def deep_sets_dataset(positive_examples, negative_examples, global_features=None
     positive_label = [0, 1]
     negative_label = [1, 0]
 
+    dataset = []
+
     # Concatenation of a support set for each object to classify
-    for pos_example_to_classify_idx in pos_example_indices:
-        pos_example_to_classify = positive_examples[pos_example_to_classify_idx]
+    positive_model_inputs = concat_support_set(positive_examples[pos_example_indices], positive_examples,
+                                               size_support_set, global_features=global_features,
+                                               to_classify_indices=pos_example_indices)
+    for positive_model_input in positive_model_inputs:
+        dataset.append((positive_model_input, positive_label))
 
-        support_pos_examples = np.delete(positive_examples, pos_example_to_classify_idx, axis=0)
-        model_input = concat_support_set(pos_example_to_classify, support_pos_examples, size_support_set,
-                                         global_features=global_features)
-
-        dataset.append((model_input, positive_label))
-
-    for neg_example_to_classify_idx in neg_example_indices:
-        neg_example_to_classify = negative_examples[neg_example_to_classify_idx]
-
-        model_input = concat_support_set(neg_example_to_classify, positive_examples, size_support_set,
-                                         global_features=global_features)
-
-        dataset.append((model_input, negative_label))
+    negative_model_inputs = concat_support_set(negative_examples[neg_example_indices], positive_examples,
+                                               size_support_set, global_features=global_features)
+    for negative_model_input in negative_model_inputs:
+        dataset.append((negative_model_input, negative_label))
     return dataset
 
 
@@ -307,11 +327,7 @@ def deep_sets_eval_dataset(eval_data, support_examples, global_features=None, si
         dataset (torch.FloatTensor): The evaluation dataset
 
     """
-    dataset = []
-    for eval_instance in eval_data:
-        model_input = concat_support_set(eval_instance, support_examples, size_support_set,
-                                         global_features=global_features)
-        dataset.append(model_input[None, ...])
-
-    dataset = torch.FloatTensor(np.concatenate(dataset))
+    dataset = concat_support_set(eval_data, support_examples, size_support_set,
+                                 global_features=global_features)
+    dataset = torch.FloatTensor(dataset)
     return dataset
