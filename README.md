@@ -1,5 +1,5 @@
 # Open Cluster Automatic Membership Determination with Gaia data
-This repository presents automatic procedure for determining new members of open clusters. We use a neural network architecture to find additional members of an open cluster based on already established probable members. To train our model, we use astrometric and photometric data of stars obtained with the Gaia space telescope. The repository contains code for downloading and preparing datasets, for training the model and for the visualization of some results. 
+This repository presents an automatic procedure for determining new members of open clusters. We use a neural network architecture to find additional members of an open cluster based on already established probable members. To train our model, we use astrometric and photometric data of stars obtained with the Gaia space telescope. The repository contains code for downloading and preparing datasets, for training the model and for the visualization of some results. 
 
 The research paper related to this work can be found [here](https://arxiv.org/abs/2303.08474).
 
