@@ -8,7 +8,7 @@ with open('requirements.txt') as f:
     requirements = f.read().splitlines()
 
 setup(name='gaia_oc_amd',
-      version='0.2',
+      version='0.2.1',
       description='Machine learning tool for the determination of new members of open clusters using Gaia data.',
       long_description=long_description,
       long_description_content_type="text/markdown",

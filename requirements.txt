@@ -1,6 +1,6 @@
 numpy
 pandas
-matplotlib==3.5
+matplotlib
 matplotlib_venn
 torch
 torchvision
@@ -12,4 +12,4 @@ requests
 lxml
 gaiadr3-zeropoint
 dustapprox
-scikit-learn>=1.1.0
+scikit-learn

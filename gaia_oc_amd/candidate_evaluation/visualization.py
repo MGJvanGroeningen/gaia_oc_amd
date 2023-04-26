@@ -599,7 +599,7 @@ def plot_sources(members, save_file='members.png', colour='g_rp', comparison=Non
 
         if y == 'phot_g_mean_mag':
             if show_isochrone and cluster is not None and cluster.isochrone is not None:
-                ax.plot(cluster.isochrone[colour], cluster.isochrone['phot_g_mean_mag'],
+                ax.plot(cluster.isochrone[colour].to_numpy(), cluster.isochrone['phot_g_mean_mag'].to_numpy(),
                         label='isochrone', zorder=1)
             ax.invert_yaxis()
             legend_loc = 'best'
